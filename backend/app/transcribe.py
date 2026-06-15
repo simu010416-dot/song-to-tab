@@ -1,0 +1,344 @@
+"""核心扒谱引擎：音频 -> 音符 / 和弦。
+
+- realistic 引擎：librosa pYIN 单声部旋律识别（无重型依赖）。
+- advanced 引擎：Spotify basic-pitch 多声部识别（可选安装）。
+
+输出的音符 (midi, start, end, velocity) 之后会交给 tab.py 映射到吉他六线谱。
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple
+
+import librosa
+import numpy as np
+
+SR = 22050  # 统一采样率
+NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def midi_to_name(midi: int) -> str:
+    octave = midi // 12 - 1
+    return f"{NOTE_NAMES[midi % 12]}{octave}"
+
+
+@dataclass
+class RawNote:
+    midi: int
+    start: float
+    end: float
+    velocity: float = 0.8
+
+
+@dataclass
+class RawChord:
+    name: str
+    start: float
+    end: float
+
+
+@dataclass
+class EngineResult:
+    notes: List[RawNote]
+    chords: List[RawChord] = field(default_factory=list)
+    tempo: float = 120.0
+    duration: float = 0.0
+    sample_rate: int = SR
+    warnings: List[str] = field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# 音频加载 / 基础分析
+# --------------------------------------------------------------------------- #
+def load_audio(path: str) -> Tuple[np.ndarray, int]:
+    y, sr = librosa.load(path, sr=SR, mono=True)
+    y, _ = librosa.effects.trim(y, top_db=40)
+    return y, sr
+
+
+def estimate_tempo(y: np.ndarray, sr: int) -> float:
+    try:
+        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        tempo = float(np.atleast_1d(tempo)[0])
+        if not math.isfinite(tempo) or tempo <= 0:
+            return 120.0
+        return round(tempo, 1)
+    except Exception:
+        return 120.0
+
+
+# --------------------------------------------------------------------------- #
+# 单声部旋律 (realistic)
+# --------------------------------------------------------------------------- #
+def detect_melody(
+    y: np.ndarray,
+    sr: int,
+    fmin_note: str = "E2",
+    fmax_note: str = "E6",
+) -> List[RawNote]:
+    """用 pYIN 估计基频，再把连续等高的帧合并为音符事件。"""
+    fmin = librosa.note_to_hz(fmin_note)
+    fmax = librosa.note_to_hz(fmax_note)
+    hop = 512
+
+    f0, voiced_flag, voiced_prob = librosa.pyin(
+        y, fmin=fmin, fmax=fmax, sr=sr, hop_length=hop, fill_na=np.nan
+    )
+    times = librosa.times_like(f0, sr=sr, hop_length=hop)
+
+    # 帧级能量，用作 velocity
+    rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+    if rms.max() > 0:
+        rms = rms / rms.max()
+
+    # 每帧 -> midi（无声为 -1）
+    midi_seq = np.full(len(f0), -1, dtype=int)
+    for i, (f, v) in enumerate(zip(f0, voiced_flag)):
+        if v and f is not None and not np.isnan(f) and f > 0:
+            midi_seq[i] = int(round(librosa.hz_to_midi(f)))
+
+    notes: List[RawNote] = []
+    cur_midi = -1
+    start_idx = 0
+    min_dur = 0.06  # 太短的音符丢弃，过滤抖动
+
+    def flush(end_idx: int):
+        nonlocal cur_midi, start_idx
+        if cur_midi < 0:
+            return
+        t0 = float(times[start_idx])
+        t1 = float(times[min(end_idx, len(times) - 1)])
+        if t1 - t0 >= min_dur:
+            seg = rms[start_idx:max(end_idx, start_idx + 1)]
+            vel = float(np.clip(seg.mean() if len(seg) else 0.6, 0.1, 1.0))
+            notes.append(RawNote(midi=cur_midi, start=t0, end=t1, velocity=vel))
+
+    for i, m in enumerate(midi_seq):
+        if m != cur_midi:
+            flush(i)
+            cur_midi = m
+            start_idx = i
+    flush(len(midi_seq) - 1)
+
+    return _merge_close_notes(notes)
+
+
+def _merge_close_notes(notes: List[RawNote], gap: float = 0.04) -> List[RawNote]:
+    """合并相同音高、间隔很小的相邻音符。"""
+    if not notes:
+        return notes
+    merged = [notes[0]]
+    for n in notes[1:]:
+        last = merged[-1]
+        if n.midi == last.midi and n.start - last.end <= gap:
+            last.end = n.end
+            last.velocity = max(last.velocity, n.velocity)
+        else:
+            merged.append(n)
+    return merged
+
+
+# --------------------------------------------------------------------------- #
+# 和弦识别 (medium)
+# --------------------------------------------------------------------------- #
+# 大三和弦 / 小三和弦模板（相对根音的半音集合）
+_TRIADS = {
+    "": [0, 4, 7],    # major
+    "m": [0, 3, 7],   # minor
+}
+
+
+def detect_chords(y: np.ndarray, sr: int, tempo: float) -> List[RawChord]:
+    """基于 chroma 的简易和弦识别，按拍分段做模板匹配。"""
+    hop = 512
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=hop)
+    times = librosa.times_like(chroma, sr=sr, hop_length=hop)
+
+    # 用拍点分段；失败则用固定 1 秒窗
+    try:
+        _, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=hop)
+        beat_times = librosa.frames_to_time(beats, sr=sr, hop_length=hop)
+    except Exception:
+        beat_times = np.array([])
+
+    if len(beat_times) < 2:
+        step = max(1.0, 60.0 / max(tempo, 1.0) * 2)
+        beat_times = np.arange(0, times[-1] if len(times) else 0, step)
+
+    # 构建所有候选和弦模板向量
+    templates = {}
+    for root in range(12):
+        for suffix, intervals in _TRIADS.items():
+            vec = np.zeros(12)
+            for iv in intervals:
+                vec[(root + iv) % 12] = 1.0
+            templates[f"{NOTE_NAMES[root]}{suffix}"] = vec / np.linalg.norm(vec)
+
+    chords: List[RawChord] = []
+    edges = list(beat_times) + [float(times[-1]) if len(times) else 0.0]
+    for a, b in zip(edges[:-1], edges[1:]):
+        if b - a < 0.15:
+            continue
+        mask = (times >= a) & (times < b)
+        if not mask.any():
+            continue
+        seg = chroma[:, mask].mean(axis=1)
+        norm = np.linalg.norm(seg)
+        if norm < 1e-6:
+            continue
+        seg = seg / norm
+        best_name, best_score = None, -1.0
+        for name, vec in templates.items():
+            score = float(seg @ vec)
+            if score > best_score:
+                best_name, best_score = name, score
+        if best_name and best_score > 0.5:
+            if chords and chords[-1].name == best_name and a - chords[-1].end < 0.3:
+                chords[-1].end = b  # 合并相邻相同和弦
+            else:
+                chords.append(RawChord(name=best_name, start=float(a), end=float(b)))
+    return chords
+
+
+# --------------------------------------------------------------------------- #
+# 多声部 (advanced, basic-pitch)
+# --------------------------------------------------------------------------- #
+def detect_polyphonic(path: str) -> Optional[List[RawNote]]:
+    """使用 basic-pitch 做多声部识别；未安装则返回 None。"""
+    try:
+        from basic_pitch.inference import predict
+        from basic_pitch import ICASSP_2022_MODEL_PATH
+    except Exception:
+        return None
+
+    try:
+        _, _, note_events = predict(path, ICASSP_2022_MODEL_PATH)
+    except Exception:
+        try:
+            _, _, note_events = predict(path)
+        except Exception:
+            return None
+
+    notes: List[RawNote] = []
+    # note_events: list of (start, end, pitch_midi, amplitude, [pitch_bends])
+    for ev in note_events:
+        start, end, pitch = float(ev[0]), float(ev[1]), int(ev[2])
+        amp = float(ev[3]) if len(ev) > 3 else 0.8
+        notes.append(
+            RawNote(
+                midi=pitch,
+                start=start,
+                end=end,
+                velocity=float(np.clip(amp, 0.1, 1.0)),
+            )
+        )
+    notes.sort(key=lambda n: (n.start, n.midi))
+    return notes
+
+
+# --------------------------------------------------------------------------- #
+# 节奏量化
+# --------------------------------------------------------------------------- #
+_GRID = {"quarter": 1.0, "eighth": 0.5, "sixteenth": 0.25}
+
+
+def quantize_notes(
+    notes: List[RawNote], tempo: float, grid: str
+) -> List[RawNote]:
+    if grid not in _GRID or not notes:
+        return notes
+    beat = 60.0 / max(tempo, 1.0)
+    step = beat * _GRID[grid]
+    if step <= 0:
+        return notes
+    out: List[RawNote] = []
+    for n in notes:
+        s = round(n.start / step) * step
+        e = round(n.end / step) * step
+        if e <= s:
+            e = s + step  # 至少一个网格长度
+        out.append(RawNote(midi=n.midi, start=s, end=e, velocity=n.velocity))
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# 顶层调度
+# --------------------------------------------------------------------------- #
+def transcribe(
+    path: str,
+    engine: str = "realistic",
+    degree: str = "simple",
+    quantize: str = "none",
+) -> EngineResult:
+    y, sr = load_audio(path)
+    duration = float(len(y) / sr) if sr else 0.0
+    tempo = estimate_tempo(y, sr)
+    warnings: List[str] = []
+    notes: List[RawNote] = []
+    chords: List[RawChord] = []
+
+    use_advanced = engine == "advanced"
+    if use_advanced:
+        poly = detect_polyphonic(path)
+        if poly is None:
+            warnings.append(
+                "未检测到 basic-pitch，已回退到务实(单声部)引擎。"
+                "安装方式：pip install \"basic-pitch[onnx]\""
+            )
+            use_advanced = False
+        else:
+            notes = poly
+
+    if not use_advanced:
+        notes = detect_melody(y, sr)
+
+    # 扒谱程度处理
+    if degree == "simple":
+        notes = _top_voice(notes)  # 仅保留单声部主旋律
+    elif degree == "medium":
+        if not use_advanced:
+            notes = _top_voice(notes)
+        chords = detect_chords(y, sr, tempo)
+    elif degree == "full":
+        if not use_advanced:
+            warnings.append(
+                "full 程度的多声部需要进阶引擎(basic-pitch)；"
+                "务实引擎下仍以单声部旋律输出。"
+            )
+        chords = detect_chords(y, sr, tempo)
+
+    notes = quantize_notes(notes, tempo, quantize)
+    notes.sort(key=lambda n: (n.start, n.midi))
+
+    if not notes:
+        warnings.append("未能识别到清晰音符，请尝试更干净/单声部的音频。")
+
+    return EngineResult(
+        notes=notes,
+        chords=chords,
+        tempo=tempo,
+        duration=duration,
+        sample_rate=sr,
+        warnings=warnings,
+    )
+
+
+def _top_voice(notes: List[RawNote]) -> List[RawNote]:
+    """在重叠音符中只保留最高音，得到单声部旋律线。"""
+    if not notes:
+        return notes
+    notes = sorted(notes, key=lambda n: (n.start, -n.midi))
+    result: List[RawNote] = []
+    for n in notes:
+        if result and n.start < result[-1].end - 1e-3:
+            # 与上一个音符重叠：保留较高者
+            if n.midi > result[-1].midi:
+                result[-1].end = min(result[-1].end, n.start)
+                if result[-1].end <= result[-1].start:
+                    result.pop()
+                result.append(n)
+            # 否则丢弃当前较低音
+        else:
+            result.append(n)
+    return [n for n in result if n.end > n.start]
