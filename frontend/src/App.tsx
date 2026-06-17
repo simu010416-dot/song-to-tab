@@ -372,6 +372,36 @@ export default function App() {
           </div>
 
           <div className="control">
+            <h3>
+              人声分离 (Demucs)
+              <span className={`badge ${separateOk ? "on" : ""}`}>
+                {separateOk === null
+                  ? "检测中"
+                  : separateOk
+                  ? "可用"
+                  : "未安装"}
+              </span>
+            </h3>
+            <div className="segment">
+              {SEPARATES.map((o) => {
+                const disabled = o.id !== "none" && separateOk === false;
+                return (
+                  <div
+                    key={o.id}
+                    className={`opt ${separate === o.id ? "active" : ""} ${
+                      disabled ? "disabled" : ""
+                    }`}
+                    onClick={() => !disabled && setSeparate(o.id)}
+                  >
+                    <div className="t">{o.title}</div>
+                    <div className="d">{o.desc}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="control">
             <h3>扒谱引擎</h3>
             <div className="segment">
               {ENGINES.map((o) => {
@@ -396,36 +426,6 @@ export default function App() {
                         </span>
                       )}
                     </div>
-                    <div className="d">{o.desc}</div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="control">
-            <h3>
-              人声分离 (Demucs)
-              <span className={`badge ${separateOk ? "on" : ""}`}>
-                {separateOk === null
-                  ? "检测中"
-                  : separateOk
-                  ? "可用"
-                  : "未安装"}
-              </span>
-            </h3>
-            <div className="segment">
-              {SEPARATES.map((o) => {
-                const disabled = o.id !== "none" && separateOk === false;
-                return (
-                  <div
-                    key={o.id}
-                    className={`opt ${separate === o.id ? "active" : ""} ${
-                      disabled ? "disabled" : ""
-                    }`}
-                    onClick={() => !disabled && setSeparate(o.id)}
-                  >
-                    <div className="t">{o.title}</div>
                     <div className="d">{o.desc}</div>
                   </div>
                 );
