@@ -382,3 +382,49 @@ footer {
   font-size: 12px;
   color: var(--muted);
 }
+
+.section-title {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+
+.audio-source-toggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.audio-source-toggle button {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.audio-source-toggle button:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.audio-source-toggle button.active {
+  background: rgba(255, 122, 69, 0.12);
+  border-color: rgba(255, 122, 69, 0.45);
+  color: var(--accent-2);
+}
+
+.source-audio-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.source-audio-transport {
+  margin-bottom: 0;
+}

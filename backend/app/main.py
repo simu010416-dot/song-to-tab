@@ -1,6 +1,7 @@
 """FastAPI 入口：上传音频 -> 转写 -> 吉他六线谱。"""
 from __future__ import annotations
 
+import base64
 import os
 import tempfile
 import traceback
@@ -94,6 +95,10 @@ async def transcribe_endpoint(
         ascii_tab = tab.render_ascii_tab(notes, result.tempo, chords)
         measures = tab.count_measures(notes, result.tempo)
 
+        processed_b64 = None
+        if result.processed_audio:
+            processed_b64 = base64.b64encode(result.processed_audio).decode("ascii")
+
         return TranscriptionResult(
             engine=engine,
             degree=degree,
@@ -109,6 +114,7 @@ async def transcribe_endpoint(
             ascii_tab=ascii_tab,
             warnings=result.warnings,
             filename=file.filename,
+            processed_audio_base64=processed_b64,
         )
     except HTTPException:
         raise

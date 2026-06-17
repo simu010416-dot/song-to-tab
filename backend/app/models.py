@@ -71,3 +71,6 @@ class TranscriptionResult(BaseModel):
     ascii_tab: str
     warnings: List[str] = []
     filename: Optional[str] = None
+    processed_audio_base64: Optional[str] = Field(
+        None, description="Demucs 分离后的 WAV（base64），仅 separate≠none 且成功时返回"
+    )

@@ -34,6 +34,7 @@ export interface TranscriptionResult {
   ascii_tab: string;
   warnings: string[];
   filename?: string;
+  processed_audio_base64?: string | null;
 }
 
 export interface TranscribeOptions {

@@ -50,6 +50,7 @@ class EngineResult:
     duration: float = 0.0
     sample_rate: int = SR
     warnings: List[str] = field(default_factory=list)
+    processed_audio: Optional[bytes] = None  # 分离后的 WAV 字节（若有）
 
 
 # --------------------------------------------------------------------------- #
@@ -336,6 +337,11 @@ def transcribe(
         if not notes:
             warnings.append("未能识别到清晰音符，请尝试更干净/单声部的音频。")
 
+        processed_audio: Optional[bytes] = None
+        if separated_path and separated_path != path and os.path.exists(separated_path):
+            with open(separated_path, "rb") as f:
+                processed_audio = f.read()
+
         return EngineResult(
             notes=notes,
             chords=chords,
@@ -343,6 +349,7 @@ def transcribe(
             duration=duration,
             sample_rate=sr,
             warnings=warnings,
+            processed_audio=processed_audio,
         )
     finally:
         if separated_path and separated_path != path and os.path.exists(separated_path):

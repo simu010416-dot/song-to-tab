@@ -10,6 +10,7 @@ import {
 } from "./api";
 import { TabPlayer, PLAYBACK_SPEEDS, type PlaybackSpeed } from "./player";
 import TabView, { type TabViewHandle } from "./TabView";
+import SourceAudioPlayer, { base64ToAudioUrl } from "./SourceAudioPlayer";
 import { IconPause, IconPlay, IconStop } from "./TransportIcons";
 import {
   INSTRUMENT_LABELS,
@@ -76,6 +77,9 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
+  const [audioSource, setAudioSource] = useState<"original" | "separated">(
+    "original"
+  );
   const inputRef = useRef<HTMLInputElement>(null);
   const tabRef = useRef<TabViewHandle>(null);
   const playerRef = useRef<TabPlayer | null>(null);
@@ -100,6 +104,47 @@ export default function App() {
       playerRef.current = null;
     };
   }, []);
+
+  const originalAudioUrl = useMemo(() => {
+    if (!file) return null;
+    return URL.createObjectURL(file);
+  }, [file]);
+
+  useEffect(() => {
+    return () => {
+      if (originalAudioUrl) URL.revokeObjectURL(originalAudioUrl);
+    };
+  }, [originalAudioUrl]);
+
+  const separatedAudioUrl = useMemo(() => {
+    if (!result?.processed_audio_base64) return null;
+    return base64ToAudioUrl(result.processed_audio_base64);
+  }, [result?.processed_audio_base64]);
+
+  useEffect(() => {
+    return () => {
+      if (separatedAudioUrl) URL.revokeObjectURL(separatedAudioUrl);
+    };
+  }, [separatedAudioUrl]);
+
+  useEffect(() => {
+    if (separatedAudioUrl) {
+      setAudioSource("separated");
+    } else {
+      setAudioSource("original");
+    }
+  }, [separatedAudioUrl]);
+
+  const activeAudioUrl =
+    audioSource === "separated" && separatedAudioUrl
+      ? separatedAudioUrl
+      : originalAudioUrl;
+
+  const separateLabel = useMemo(() => {
+    if (!result || result.separate === "none") return "分离后";
+    const opt = SEPARATES.find((s) => s.id === result.separate);
+    return opt ? `分离后 · ${opt.title}` : "分离后";
+  }, [result]);
 
   const resetPlayback = useCallback(() => {
     const player = playerRef.current;
@@ -281,6 +326,31 @@ export default function App() {
           />
         </div>
       </div>
+
+      {file && (
+        <div className="panel">
+          <h3 className="section-title">音频试听</h3>
+          {separatedAudioUrl && (
+            <div className="audio-source-toggle">
+              <button
+                type="button"
+                className={audioSource === "original" ? "active" : ""}
+                onClick={() => setAudioSource("original")}
+              >
+                原始音频
+              </button>
+              <button
+                type="button"
+                className={audioSource === "separated" ? "active" : ""}
+                onClick={() => setAudioSource("separated")}
+              >
+                {separateLabel}
+              </button>
+            </div>
+          )}
+          <SourceAudioPlayer src={activeAudioUrl} />
+        </div>
+      )}
 
       {/* 选项区 */}
       <div className="panel">
