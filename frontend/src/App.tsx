@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   checkAdvanced,
   transcribe,
@@ -7,7 +7,13 @@ import {
   type Quantize,
   type TranscriptionResult,
 } from "./api";
-import TabView from "./TabView";
+import { TabPlayer, PLAYBACK_SPEEDS, type PlaybackSpeed } from "./player";
+import TabView, { type TabViewHandle } from "./TabView";
+import { IconPause, IconPlay, IconStop } from "./TransportIcons";
+import {
+  INSTRUMENT_LABELS,
+  type Instrument,
+} from "./instruments";
 
 interface Opt<T> {
   id: T;
@@ -33,25 +39,153 @@ const QUANTS: Opt<Quantize>[] = [
   { id: "sixteenth", title: "1/16 拍", desc: "对齐到十六分音符" },
 ];
 
+const INSTRUMENTS: Opt<Instrument>[] = [
+  { id: "guitar", title: "🎸 吉他", desc: "标准调弦 EADGBE · 拨弦音色" },
+  { id: "ukulele", title: "🪕 尤克里里", desc: "GCEA · 明亮拨弦音色" },
+  { id: "piano", title: "🎹 钢琴", desc: "键盘音色（试听旋律）" },
+];
+
+function formatTime(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [drag, setDrag] = useState(false);
   const [engine, setEngine] = useState<Engine>("realistic");
   const [degree, setDegree] = useState<Degree>("simple");
   const [quant, setQuant] = useState<Quantize>("none");
+  const [instrument, setInstrument] = useState<Instrument>("guitar");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<TranscriptionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [advancedOk, setAdvancedOk] = useState<boolean | null>(null);
   const [view, setView] = useState<"svg" | "ascii">("svg");
+  const [currentTime, setCurrentTime] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
   const inputRef = useRef<HTMLInputElement>(null);
+  const tabRef = useRef<TabViewHandle>(null);
+  const playerRef = useRef<TabPlayer | null>(null);
+  const rafRef = useRef<number>(0);
 
   useEffect(() => {
     checkAdvanced().then(setAdvancedOk);
   }, []);
 
+  useEffect(() => {
+    const player = new TabPlayer();
+    playerRef.current = player;
+    player.onEnded = () => {
+      setIsPlaying(false);
+      setCurrentTime(player.songDuration);
+    };
+    return () => {
+      player.dispose();
+      playerRef.current = null;
+    };
+  }, []);
+
+  const resetPlayback = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    player.unload();
+    setCurrentTime(0);
+    setIsPlaying(false);
+    setPlaybackSpeed(1);
+  }, []);
+
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    setCurrentTime(0);
+    setIsPlaying(false);
+    setPlaybackSpeed(1);
+    if (result && result.notes.length > 0) {
+      player.load(result.notes, result.duration);
+      player.setInstrument(instrument);
+      player.setPlaybackRate(1);
+    } else {
+      player.unload();
+    }
+  }, [result, instrument]);
+
+  useEffect(() => {
+    playerRef.current?.setInstrument(instrument);
+  }, [instrument]);
+
+  const handleSpeedChange = useCallback((speed: PlaybackSpeed) => {
+    setPlaybackSpeed(speed);
+    playerRef.current?.setPlaybackRate(speed);
+  }, []);
+
+  useEffect(() => {
+    const tick = () => {
+      const player = playerRef.current;
+      if (player) {
+        if (player.isPlaying) {
+          setCurrentTime(player.currentTime);
+        }
+        setIsPlaying((prev) =>
+          prev === player.isPlaying ? prev : player.isPlaying
+        );
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, []);
+
+  const activeNotes = useMemo(() => {
+    if (!result) return new Set<number>();
+    const set = new Set<number>();
+    result.notes.forEach((n, i) => {
+      if (n.start <= currentTime && currentTime < n.end) set.add(i);
+    });
+    return set;
+  }, [result, currentTime]);
+
+  const togglePlay = useCallback(async () => {
+    const player = playerRef.current;
+    if (!player || !result?.notes.length) return;
+    if (player.isPlaying) {
+      player.pause();
+      setCurrentTime(player.currentTime);
+      setIsPlaying(false);
+    } else {
+      const from =
+        currentTime >= result.duration - 0.05 ? 0 : currentTime;
+      if (from === 0) setCurrentTime(0);
+      setIsPlaying(true);
+      await player.play(from);
+      setIsPlaying(player.isPlaying);
+    }
+  }, [currentTime, result]);
+
+  const stopPlayback = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    player.stop();
+    setCurrentTime(0);
+    setIsPlaying(false);
+  }, []);
+
+  const seekPlayback = useCallback(
+    (sec: number) => {
+      const player = playerRef.current;
+      if (!player || !result) return;
+      player.seek(sec);
+      setCurrentTime(sec);
+      setIsPlaying(player.isPlaying);
+    },
+    [result]
+  );
+
   const pickFile = (f: File | null | undefined) => {
     if (!f) return;
+    resetPlayback();
     setFile(f);
     setResult(null);
     setError(null);
@@ -59,6 +193,7 @@ export default function App() {
 
   const run = async () => {
     if (!file) return;
+    resetPlayback();
     setLoading(true);
     setError(null);
     setResult(null);
@@ -85,6 +220,10 @@ export default function App() {
     a.download = `${(result.filename || "tab").replace(/\.[^.]+$/, "")}.txt`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const exportPng = () => {
+    tabRef.current?.exportPng(result?.filename);
   };
 
   return (
@@ -129,12 +268,18 @@ export default function App() {
       <div className="panel">
         <div className="controls">
           <div className="control">
-            <h3>谱面类型</h3>
+            <h3>播放乐器</h3>
             <div className="segment">
-              <div className="opt active">
-                <div className="t">🎸 吉他六线谱 (TAB)</div>
-                <div className="d">标准调弦 EADGBE</div>
-              </div>
+              {INSTRUMENTS.map((o) => (
+                <div
+                  key={o.id}
+                  className={`opt ${instrument === o.id ? "active" : ""}`}
+                  onClick={() => setInstrument(o.id)}
+                >
+                  <div className="t">{o.title}</div>
+                  <div className="d">{o.desc}</div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -268,6 +413,11 @@ export default function App() {
               ASCII 六线谱
             </button>
             <div style={{ flex: 1 }} />
+            {view === "svg" && result.notes.length > 0 && (
+              <button className="btn ghost" onClick={exportPng}>
+                导出 PNG
+              </button>
+            )}
             <button className="btn ghost" onClick={copyTab}>
               复制
             </button>
@@ -278,15 +428,107 @@ export default function App() {
 
           {result.notes.length === 0 ? (
             <div className="warn">没有可显示的音符。</div>
-          ) : view === "svg" ? (
-            <TabView
-              notes={result.notes}
-              chords={result.chords}
-              tuning={result.tuning}
-              duration={result.duration}
-            />
           ) : (
-            <pre className="tab-ascii">{result.ascii_tab}</pre>
+            <>
+              <div className="transport">
+                <button
+                  className={`transport-btn play ${isPlaying ? "playing" : ""}`}
+                  type="button"
+                  onClick={() => void togglePlay()}
+                  title={isPlaying ? "暂停" : "播放"}
+                  aria-label={isPlaying ? "暂停" : "播放"}
+                >
+                  {isPlaying ? (
+                    <IconPause className="transport-icon" />
+                  ) : (
+                    <IconPlay className="transport-icon" />
+                  )}
+                </button>
+                <button
+                  className="transport-btn"
+                  type="button"
+                  onClick={stopPlayback}
+                  title="停止"
+                  aria-label="停止"
+                >
+                  <IconStop className="transport-icon" />
+                </button>
+                <input
+                  className="transport-seek"
+                  type="range"
+                  min={0}
+                  max={result.duration}
+                  step={0.01}
+                  value={Math.min(currentTime, result.duration)}
+                  onChange={(e) => seekPlayback(Number(e.target.value))}
+                />
+                <span className="transport-time">
+                  {formatTime(currentTime)} / {formatTime(result.duration)}
+                </span>
+                <label className="transport-speed">
+                  <span className="transport-speed-label">速度</span>
+                  <select
+                    value={playbackSpeed}
+                    onChange={(e) =>
+                      handleSpeedChange(Number(e.target.value) as PlaybackSpeed)
+                    }
+                  >
+                    {PLAYBACK_SPEEDS.map((s) => (
+                      <option key={s} value={s}>
+                        {s === 1 ? "1×" : `${s}×`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span className="transport-instrument" title="当前播放音色">
+                  {INSTRUMENT_LABELS[instrument]}
+                </span>
+              </div>
+              <p className="transport-hint">
+                {result.quantize !== "none" ? (
+                  <>
+                    音符已按
+                    {QUANTS.find((q) => q.id === result.quantize)?.title}
+                    量化；1× 速度与谱面网格一致（≈{result.tempo.toFixed(0)}{" "}
+                    BPM），变速等比缩放时值
+                    {playbackSpeed !== 1 && (
+                      <>
+                        ，当前约{" "}
+                        {(result.tempo * playbackSpeed).toFixed(0)} BPM
+                      </>
+                    )}
+                    。
+                  </>
+                ) : (
+                  <>
+                    播放速度可选；1× 为原始时值
+                    {playbackSpeed !== 1 && (
+                      <>
+                        ，当前约{" "}
+                        {(result.tempo * playbackSpeed).toFixed(0)} BPM
+                      </>
+                    )}
+                    。
+                  </>
+                )}
+              </p>
+
+              {view === "svg" ? (
+                <TabView
+                  ref={tabRef}
+                  notes={result.notes}
+                  chords={result.chords}
+                  tuning={result.tuning}
+                  duration={result.duration}
+                  tempo={result.tempo}
+                  filename={result.filename}
+                  currentTime={currentTime}
+                  activeNotes={activeNotes}
+                />
+              ) : (
+                <pre className="tab-ascii">{result.ascii_tab}</pre>
+              )}
+            </>
           )}
         </div>
       )}
