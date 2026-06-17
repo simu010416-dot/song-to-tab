@@ -8,11 +8,15 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
+
 from typing import List, Optional, Tuple
 
 import librosa
 import numpy as np
+
+from . import separate
 
 SR = 22050  # 统一采样率
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -270,58 +274,82 @@ def transcribe(
     engine: str = "realistic",
     degree: str = "simple",
     quantize: str = "none",
+    separate_mode: str = "none",
 ) -> EngineResult:
-    y, sr = load_audio(path)
-    duration = float(len(y) / sr) if sr else 0.0
-    tempo = estimate_tempo(y, sr)
     warnings: List[str] = []
-    notes: List[RawNote] = []
-    chords: List[RawChord] = []
+    work_path = path
+    separated_path: Optional[str] = None
 
-    use_advanced = engine == "advanced"
-    if use_advanced:
-        poly = detect_polyphonic(path)
-        if poly is None:
-            warnings.append(
-                "未检测到 basic-pitch，已回退到务实(单声部)引擎。"
-                "安装方式：pip install \"basic-pitch[onnx]\""
-            )
-            use_advanced = False
+    if separate_mode != "none":
+        if separate.separate_available():
+            separated_path, sep_warn = separate.run_separation(path, separate_mode)
+            if sep_warn:
+                warnings.append(sep_warn)
+            elif separated_path and separated_path != path:
+                work_path = separated_path
         else:
-            notes = poly
-
-    if not use_advanced:
-        notes = detect_melody(y, sr)
-
-    # 扒谱程度处理
-    if degree == "simple":
-        notes = _top_voice(notes)  # 仅保留单声部主旋律
-    elif degree == "medium":
-        if not use_advanced:
-            notes = _top_voice(notes)
-        chords = detect_chords(y, sr, tempo)
-    elif degree == "full":
-        if not use_advanced:
+            reason = separate.separate_unavailable_reason()
             warnings.append(
-                "full 程度的多声部需要进阶引擎(basic-pitch)；"
-                "务实引擎下仍以单声部旋律输出。"
+                reason or "人声分离不可用，已跳过人声分离。"
             )
-        chords = detect_chords(y, sr, tempo)
 
-    notes = quantize_notes(notes, tempo, quantize)
-    notes.sort(key=lambda n: (n.start, n.midi))
+    try:
+        y, sr = load_audio(work_path)
+        duration = float(len(y) / sr) if sr else 0.0
+        tempo = estimate_tempo(y, sr)
+        notes: List[RawNote] = []
+        chords: List[RawChord] = []
 
-    if not notes:
-        warnings.append("未能识别到清晰音符，请尝试更干净/单声部的音频。")
+        use_advanced = engine == "advanced"
+        if use_advanced:
+            poly = detect_polyphonic(work_path)
+            if poly is None:
+                warnings.append(
+                    "未检测到 basic-pitch，已回退到务实(单声部)引擎。"
+                    "安装方式：pip install \"basic-pitch[onnx]\""
+                )
+                use_advanced = False
+            else:
+                notes = poly
 
-    return EngineResult(
-        notes=notes,
-        chords=chords,
-        tempo=tempo,
-        duration=duration,
-        sample_rate=sr,
-        warnings=warnings,
-    )
+        if not use_advanced:
+            notes = detect_melody(y, sr)
+
+        # 扒谱程度处理
+        if degree == "simple":
+            notes = _top_voice(notes)  # 仅保留单声部主旋律
+        elif degree == "medium":
+            if not use_advanced:
+                notes = _top_voice(notes)
+            chords = detect_chords(y, sr, tempo)
+        elif degree == "full":
+            if not use_advanced:
+                warnings.append(
+                    "full 程度的多声部需要进阶引擎(basic-pitch)；"
+                    "务实引擎下仍以单声部旋律输出。"
+                )
+            chords = detect_chords(y, sr, tempo)
+
+        notes = quantize_notes(notes, tempo, quantize)
+        notes.sort(key=lambda n: (n.start, n.midi))
+
+        if not notes:
+            warnings.append("未能识别到清晰音符，请尝试更干净/单声部的音频。")
+
+        return EngineResult(
+            notes=notes,
+            chords=chords,
+            tempo=tempo,
+            duration=duration,
+            sample_rate=sr,
+            warnings=warnings,
+        )
+    finally:
+        if separated_path and separated_path != path and os.path.exists(separated_path):
+            try:
+                os.remove(separated_path)
+            except OSError:
+                pass
 
 
 def _top_voice(notes: List[RawNote]) -> List[RawNote]:

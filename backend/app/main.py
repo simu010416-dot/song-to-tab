@@ -9,7 +9,8 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import tab, transcribe
-from .models import Degree, Engine, Quantize, TranscriptionResult
+from . import separate as demucs_separate
+from .models import Degree, Engine, Quantize, Separate, TranscriptionResult
 from .tab import TUNING_NAMES
 
 
@@ -20,6 +21,10 @@ def _advanced_available() -> bool:
         return True
     except Exception:
         return False
+
+
+def _separate_available() -> bool:
+    return demucs_separate.separate_available()
 
 app = FastAPI(title="song-to-tab", version="0.1.0")
 
@@ -41,7 +46,9 @@ def root():
         "engines": [e.value for e in Engine],
         "degrees": [d.value for d in Degree],
         "quantize": [q.value for q in Quantize],
+        "separate": [s.value for s in Separate],
         "advanced_available": _advanced_available(),
+        "separate_available": _separate_available(),
     }
 
 
@@ -56,6 +63,7 @@ async def transcribe_endpoint(
     engine: Engine = Form(Engine.realistic),
     degree: Degree = Form(Degree.simple),
     quantize: Quantize = Form(Quantize.none),
+    separate: Separate = Form(Separate.none),
 ):
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_EXT:
@@ -78,6 +86,7 @@ async def transcribe_endpoint(
             engine=engine.value,
             degree=degree.value,
             quantize=quantize.value,
+            separate_mode=separate.value,
         )
 
         notes = tab.assign_positions(result.notes)
@@ -89,6 +98,7 @@ async def transcribe_endpoint(
             engine=engine,
             degree=degree,
             quantize=quantize,
+            separate=separate,
             tempo=result.tempo,
             duration=round(result.duration, 2),
             sample_rate=result.sample_rate,

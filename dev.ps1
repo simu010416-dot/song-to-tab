@@ -1,6 +1,7 @@
 ﻿# Dev launcher: backend (8000) + frontend (5173)
 param(
     [switch]$Install,
+    [switch]$InstallDemucs,
     [switch]$BackendOnly,
     [switch]$FrontendOnly
 )
@@ -45,9 +46,22 @@ if (-not $FrontendOnly) {
         & (Join-Path $BackendDir ".venv\Scripts\pip.exe") install -r (Join-Path $BackendDir "requirements.txt")
     }
 
+    if ($InstallDemucs) {
+        $Pip = Join-Path $BackendDir ".venv\Scripts\pip.exe"
+        Write-Host "Installing Demucs (torch first, then demucs)..." -ForegroundColor Yellow
+        & $Pip install torch==2.4.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+        & $Pip install demucs
+        Write-Host "Verifying Demucs..." -ForegroundColor Yellow
+        & (Join-Path $BackendDir ".venv\Scripts\python.exe") -c "from app.separate import separate_available, separate_unavailable_reason as r; ok=separate_available(); print('separate_available:', ok); print(r() or 'OK')"
+        Write-Host "If separate_available is False, see README Demucs section." -ForegroundColor DarkGray
+    }
+
     if (Test-PortInUse $BackendPort) {
         Write-Host "SKIP: backend port $BackendPort already in use" -ForegroundColor Yellow
-        Write-Host "      http://127.0.0.1:$BackendPort/docs"
+        Write-Host "      http://127.0.0.1:$BackendPort/docs" -ForegroundColor Yellow
+        if ($Install -or $InstallDemucs) {
+            Write-Host "WARN: close the old backend window and re-run dev.ps1 so new deps take effect." -ForegroundColor Yellow
+        }
     } else {
         Write-Host "START: backend -> http://127.0.0.1:$BackendPort" -ForegroundColor Green
         Start-DevWindow "song-to-tab backend" $BackendDir "& '$Uvicorn' app.main:app --reload --port $BackendPort"

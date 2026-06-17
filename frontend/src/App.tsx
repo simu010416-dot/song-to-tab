@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  checkAdvanced,
+  checkCapabilities,
   transcribe,
   type Degree,
   type Engine,
   type Quantize,
+  type Separate,
   type TranscriptionResult,
 } from "./api";
 import { TabPlayer, PLAYBACK_SPEEDS, type PlaybackSpeed } from "./player";
@@ -39,6 +40,13 @@ const QUANTS: Opt<Quantize>[] = [
   { id: "sixteenth", title: "1/16 拍", desc: "对齐到十六分音符" },
 ];
 
+const SEPARATES: Opt<Separate>[] = [
+  { id: "none", title: "不分离", desc: "直接使用原始音频" },
+  { id: "no_vocals", title: "去人声", desc: "保留 drums/bass/other 伴奏轨" },
+  { id: "vocals", title: "只保留人声", desc: "仅提取 vocals 声部" },
+  { id: "other", title: "只保留 other", desc: "吉他/键盘等常在此轨" },
+];
+
 const INSTRUMENTS: Opt<Instrument>[] = [
   { id: "guitar", title: "🎸 吉他", desc: "标准调弦 EADGBE · 拨弦音色" },
   { id: "ukulele", title: "🪕 尤克里里", desc: "GCEA · 明亮拨弦音色" },
@@ -57,11 +65,13 @@ export default function App() {
   const [engine, setEngine] = useState<Engine>("realistic");
   const [degree, setDegree] = useState<Degree>("simple");
   const [quant, setQuant] = useState<Quantize>("none");
+  const [separate, setSeparate] = useState<Separate>("none");
   const [instrument, setInstrument] = useState<Instrument>("guitar");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<TranscriptionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [advancedOk, setAdvancedOk] = useState<boolean | null>(null);
+  const [separateOk, setSeparateOk] = useState<boolean | null>(null);
   const [view, setView] = useState<"svg" | "ascii">("svg");
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -72,7 +82,10 @@ export default function App() {
   const rafRef = useRef<number>(0);
 
   useEffect(() => {
-    checkAdvanced().then(setAdvancedOk);
+    checkCapabilities().then((caps) => {
+      setAdvancedOk(caps.advanced);
+      setSeparateOk(caps.separate);
+    });
   }, []);
 
   useEffect(() => {
@@ -198,7 +211,12 @@ export default function App() {
     setError(null);
     setResult(null);
     try {
-      const res = await transcribe(file, { engine, degree, quantize: quant });
+      const res = await transcribe(file, {
+        engine,
+        degree,
+        quantize: quant,
+        separate,
+      });
       setResult(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -316,6 +334,36 @@ export default function App() {
           </div>
 
           <div className="control">
+            <h3>
+              人声分离 (Demucs)
+              <span className={`badge ${separateOk ? "on" : ""}`}>
+                {separateOk === null
+                  ? "检测中"
+                  : separateOk
+                  ? "可用"
+                  : "未安装"}
+              </span>
+            </h3>
+            <div className="segment">
+              {SEPARATES.map((o) => {
+                const disabled = o.id !== "none" && separateOk === false;
+                return (
+                  <div
+                    key={o.id}
+                    className={`opt ${separate === o.id ? "active" : ""} ${
+                      disabled ? "disabled" : ""
+                    }`}
+                    onClick={() => !disabled && setSeparate(o.id)}
+                  >
+                    <div className="t">{o.title}</div>
+                    <div className="d">{o.desc}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="control">
             <h3>扒谱程度</h3>
             <div className="segment">
               {DEGREES.map((o) => (
@@ -355,7 +403,9 @@ export default function App() {
           </button>
           {loading && (
             <span style={{ color: "var(--muted)", fontSize: 13 }}>
-              首次运行进阶引擎可能较慢（加载模型）
+              {separate !== "none"
+                ? "Demucs 分离可能较慢（首次运行需下载模型）"
+                : "首次运行进阶引擎可能较慢（加载模型）"}
             </span>
           )}
         </div>

@@ -31,6 +31,15 @@ class Quantize(str, Enum):
     sixteenth = "sixteenth"  # 1/16
 
 
+class Separate(str, Enum):
+    """Demucs 音源分离预处理。"""
+
+    none = "none"              # 不分离
+    no_vocals = "no_vocals"    # 去人声，保留伴奏
+    vocals = "vocals"          # 只保留人声
+    other = "other"            # 只保留 other 轨（吉他/键盘等）
+
+
 class Note(BaseModel):
     midi: int
     name: str
@@ -51,6 +60,7 @@ class TranscriptionResult(BaseModel):
     engine: Engine
     degree: Degree
     quantize: Quantize
+    separate: Separate
     tempo: float
     duration: float
     sample_rate: int

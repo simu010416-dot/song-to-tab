@@ -1,6 +1,7 @@
 export type Engine = "realistic" | "advanced";
 export type Degree = "simple" | "medium" | "full";
 export type Quantize = "none" | "quarter" | "eighth" | "sixteenth";
+export type Separate = "none" | "no_vocals" | "vocals" | "other";
 
 export interface Note {
   midi: number;
@@ -22,6 +23,7 @@ export interface TranscriptionResult {
   engine: Engine;
   degree: Degree;
   quantize: Quantize;
+  separate: Separate;
   tempo: number;
   duration: number;
   sample_rate: number;
@@ -38,6 +40,7 @@ export interface TranscribeOptions {
   engine: Engine;
   degree: Degree;
   quantize: Quantize;
+  separate: Separate;
 }
 
 const API_BASE = "/api";
@@ -51,6 +54,7 @@ export async function transcribe(
   form.append("engine", opts.engine);
   form.append("degree", opts.degree);
   form.append("quantize", opts.quantize);
+  form.append("separate", opts.separate);
 
   const res = await fetch(`${API_BASE}/transcribe`, {
     method: "POST",
@@ -70,12 +74,26 @@ export async function transcribe(
   return res.json();
 }
 
-export async function checkAdvanced(): Promise<boolean> {
+export interface Capabilities {
+  advanced: boolean;
+  separate: boolean;
+}
+
+export async function checkCapabilities(): Promise<Capabilities> {
   try {
     const res = await fetch(`${API_BASE}/`);
     const data = await res.json();
-    return Boolean(data?.advanced_available);
+    return {
+      advanced: Boolean(data?.advanced_available),
+      separate: Boolean(data?.separate_available),
+    };
   } catch {
-    return false;
+    return { advanced: false, separate: false };
   }
+}
+
+/** @deprecated use checkCapabilities */
+export async function checkAdvanced(): Promise<boolean> {
+  const caps = await checkCapabilities();
+  return caps.advanced;
 }
