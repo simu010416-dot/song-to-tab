@@ -293,6 +293,21 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const downloadSeparatedAudio = () => {
+    if (!result?.processed_audio_base64) return;
+    const base = (result.filename || file?.name || "audio").replace(
+      /\.[^.]+$/,
+      ""
+    );
+    const mode = result.separate !== "none" ? result.separate : "separated";
+    const url = base64ToAudioUrl(result.processed_audio_base64);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${base}_${mode}.wav`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const exportPng = () => {
     tabRef.current?.exportPng(result?.filename);
   };
@@ -306,17 +321,19 @@ export default function App() {
         <p>上传音频，自动识别并生成吉他六线谱（TAB）</p>
       </header>
 
-      {/* 上传区 */}
+      {/* 1. 上传 */}
       <div className="panel">
         <div
-          className={`dropzone ${drag ? "drag" : ""}`}
-          onClick={() => inputRef.current?.click()}
+          className={`dropzone ${drag ? "drag" : ""} ${loading ? "disabled" : ""}`}
+          onClick={() => !loading && inputRef.current?.click()}
           onDragOver={(e) => {
+            if (loading) return;
             e.preventDefault();
             setDrag(true);
           }}
           onDragLeave={() => setDrag(false)}
           onDrop={(e) => {
+            if (loading) return;
             e.preventDefault();
             setDrag(false);
             pickFile(e.dataTransfer.files?.[0]);
@@ -335,24 +352,37 @@ export default function App() {
         </div>
       </div>
 
+      {/* 2. 源音频试听（扒谱输入） */}
       {file && (
         <div className="panel">
-          <h3 className="section-title">音频试听</h3>
+          <h3 className="section-title">源音频试听</h3>
+          <p className="section-desc">
+            试听上传或分离后的音频，确认后再开始扒谱。此处与试听音色无关。
+          </p>
           {separatedAudioUrl && (
-            <div className="audio-source-toggle">
+            <div className="audio-source-row">
+              <div className="audio-source-toggle">
+                <button
+                  type="button"
+                  className={audioSource === "original" ? "active" : ""}
+                  onClick={() => setAudioSource("original")}
+                >
+                  原始音频
+                </button>
+                <button
+                  type="button"
+                  className={audioSource === "separated" ? "active" : ""}
+                  onClick={() => setAudioSource("separated")}
+                >
+                  {separateLabel}
+                </button>
+              </div>
               <button
                 type="button"
-                className={audioSource === "original" ? "active" : ""}
-                onClick={() => setAudioSource("original")}
+                className="btn ghost"
+                onClick={downloadSeparatedAudio}
               >
-                原始音频
-              </button>
-              <button
-                type="button"
-                className={audioSource === "separated" ? "active" : ""}
-                onClick={() => setAudioSource("separated")}
-              >
-                {separateLabel}
+                下载分离音频
               </button>
             </div>
           )}
@@ -360,134 +390,136 @@ export default function App() {
         </div>
       )}
 
-      {/* 选项区 */}
-      <div className="panel">
-        <div className="controls">
-          <div className="control">
-            <h3>播放乐器</h3>
-            <div className="segment">
-              {INSTRUMENTS.map((o) => (
-                <div
-                  key={o.id}
-                  className={`opt ${instrument === o.id ? "active" : ""}`}
-                  onClick={() => setInstrument(o.id)}
-                >
-                  <div className="t">{o.title}</div>
-                  <div className="d">{o.desc}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="control">
-            <h3>
-              人声分离 (Demucs)
-              <span className={`badge ${separateOk ? "on" : ""}`}>
-                {separateOk === null
-                  ? "检测中"
-                  : separateOk
-                  ? "可用"
-                  : "未安装"}
-              </span>
-            </h3>
-            <div className="segment">
-              {SEPARATES.map((o) => {
-                const disabled = o.id !== "none" && separateOk === false;
-                return (
-                  <div
-                    key={o.id}
-                    className={`opt ${separate === o.id ? "active" : ""} ${
-                      disabled ? "disabled" : ""
-                    }`}
-                    onClick={() => !disabled && setSeparate(o.id)}
-                  >
-                    <div className="t">{o.title}</div>
-                    <div className="d">{o.desc}</div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="control">
-            <h3>扒谱引擎</h3>
-            <div className="segment">
-              {ENGINES.map((o) => {
-                const disabled = o.id === "advanced" && advancedOk === false;
-                return (
-                  <div
-                    key={o.id}
-                    className={`opt ${engine === o.id ? "active" : ""} ${
-                      disabled ? "disabled" : ""
-                    }`}
-                    onClick={() => !disabled && setEngine(o.id)}
-                  >
-                    <div className="t">
-                      {o.title}
-                      {o.id === "advanced" && (
-                        <span className={`badge ${advancedOk ? "on" : ""}`}>
-                          {advancedOk === null
-                            ? "检测中"
-                            : advancedOk
-                            ? "可用"
-                            : "未安装"}
-                        </span>
-                      )}
+      {/* 3. 扒谱设置（与乐器无关） */}
+      {file && (
+        <div className={`panel ${loading ? "panel-locked" : ""}`}>
+          <h3 className="section-title">扒谱设置</h3>
+          <p className="section-desc">
+            以下选项只影响如何从音频生成谱面，不改变谱面试听时的合成音色。
+          </p>
+          <div className="controls">
+            <div className="control">
+              <h3>
+                人声分离 (Demucs)
+                <span className={`badge ${separateOk ? "on" : ""}`}>
+                  {separateOk === null
+                    ? "检测中"
+                    : separateOk
+                    ? "可用"
+                    : "未安装"}
+                </span>
+              </h3>
+              <div className="segment">
+                {SEPARATES.map((o) => {
+                  const disabled =
+                    loading || (o.id !== "none" && separateOk === false);
+                  return (
+                    <div
+                      key={o.id}
+                      className={`opt ${separate === o.id ? "active" : ""} ${
+                        disabled ? "disabled" : ""
+                      }`}
+                      onClick={() => !disabled && setSeparate(o.id)}
+                    >
+                      <div className="t">{o.title}</div>
+                      <div className="d">{o.desc}</div>
                     </div>
-                    <div className="d">{o.desc}</div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="control">
+              <h3>扒谱引擎</h3>
+              <div className="segment">
+                {ENGINES.map((o) => {
+                  const disabled =
+                    loading || (o.id === "advanced" && advancedOk === false);
+                  return (
+                    <div
+                      key={o.id}
+                      className={`opt ${engine === o.id ? "active" : ""} ${
+                        disabled ? "disabled" : ""
+                      }`}
+                      onClick={() => !disabled && setEngine(o.id)}
+                    >
+                      <div className="t">
+                        {o.title}
+                        {o.id === "advanced" && (
+                          <span className={`badge ${advancedOk ? "on" : ""}`}>
+                            {advancedOk === null
+                              ? "检测中"
+                              : advancedOk
+                              ? "可用"
+                              : "未安装"}
+                          </span>
+                        )}
+                      </div>
+                      <div className="d">{o.desc}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="control">
+              <h3>扒谱程度</h3>
+              <div className="segment">
+                {DEGREES.map((o) => {
+                  const disabled = loading;
+                  return (
+                    <div
+                      key={o.id}
+                      className={`opt ${degree === o.id ? "active" : ""} ${
+                        disabled ? "disabled" : ""
+                      }`}
+                      onClick={() => !disabled && setDegree(o.id)}
+                    >
+                      <div className="t">{o.title}</div>
+                      <div className="d">{o.desc}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="control">
+              <h3>节奏量化</h3>
+              <div className="segment">
+                {QUANTS.map((o) => {
+                  const disabled = loading;
+                  return (
+                    <div
+                      key={o.id}
+                      className={`opt ${quant === o.id ? "active" : ""} ${
+                        disabled ? "disabled" : ""
+                      }`}
+                      onClick={() => !disabled && setQuant(o.id)}
+                    >
+                      <div className="t">{o.title}</div>
+                      <div className="d">{o.desc}</div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
-          <div className="control">
-            <h3>扒谱程度</h3>
-            <div className="segment">
-              {DEGREES.map((o) => (
-                <div
-                  key={o.id}
-                  className={`opt ${degree === o.id ? "active" : ""}`}
-                  onClick={() => setDegree(o.id)}
-                >
-                  <div className="t">{o.title}</div>
-                  <div className="d">{o.desc}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="control">
-            <h3>节奏量化</h3>
-            <div className="segment">
-              {QUANTS.map((o) => (
-                <div
-                  key={o.id}
-                  className={`opt ${quant === o.id ? "active" : ""}`}
-                  onClick={() => setQuant(o.id)}
-                >
-                  <div className="t">{o.title}</div>
-                  <div className="d">{o.desc}</div>
-                </div>
-              ))}
-            </div>
+          <div className="row" style={{ marginTop: 20 }}>
+            <button className="btn" disabled={loading} onClick={run}>
+              {loading && <span className="spinner" />}
+              {loading ? "正在扒谱…" : "开始扒谱"}
+            </button>
+            {loading && (
+              <span style={{ color: "var(--muted)", fontSize: 13 }}>
+                {separate !== "none"
+                  ? "Demucs 分离可能较慢（首次运行需下载模型）"
+                  : "首次运行进阶引擎可能较慢（加载模型）"}
+              </span>
+            )}
           </div>
         </div>
-
-        <div className="row" style={{ marginTop: 20 }}>
-          <button className="btn" disabled={!file || loading} onClick={run}>
-            {loading && <span className="spinner" />}
-            {loading ? "正在扒谱…" : "开始扒谱"}
-          </button>
-          {loading && (
-            <span style={{ color: "var(--muted)", fontSize: 13 }}>
-              {separate !== "none"
-                ? "Demucs 分离可能较慢（首次运行需下载模型）"
-                : "首次运行进阶引擎可能较慢（加载模型）"}
-            </span>
-          )}
-        </div>
-      </div>
+      )}
 
       {error && (
         <div className="panel">
@@ -558,6 +590,14 @@ export default function App() {
             <div className="warn">没有可显示的谱面内容。</div>
           ) : (
             <>
+              <h3 className="section-title preview-section-title">
+                谱面试听
+              </h3>
+              <p className="section-desc">
+                {hasMelody
+                  ? "按识别出的音符合成试听，音色仅影响此处播放效果，与扒谱过程无关。"
+                  : "仅和弦模式无可合成旋律；拖动进度条可定位当前和弦位置。"}
+              </p>
               <div className="transport">
                 {hasMelody ? (
                   <>
@@ -616,19 +656,28 @@ export default function App() {
                         ))}
                       </select>
                     </label>
-                    <span className="transport-instrument" title="当前播放音色">
-                      {INSTRUMENT_LABELS[instrument]}
-                    </span>
+                    <label className="transport-speed">
+                      <span className="transport-speed-label">试听音色</span>
+                      <select
+                        value={instrument}
+                        onChange={(e) =>
+                          setInstrument(e.target.value as Instrument)
+                        }
+                        title="仅影响谱面合成试听"
+                      >
+                        {INSTRUMENTS.map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {INSTRUMENT_LABELS[o.id]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   </>
-                ) : (
-                  <span className="transport-instrument" title="仅和弦模式">
-                    仅和弦 · 拖动定位
-                  </span>
-                )}
+                ) : null}
               </div>
-              <p className="transport-hint">
-                {hasMelody ? (
-                  result.quantize !== "none" ? (
+              {hasMelody && (
+                <p className="transport-hint">
+                  {result.quantize !== "none" ? (
                     <>
                       音符已按
                       {QUANTS.find((q) => q.id === result.quantize)?.title}
@@ -653,11 +702,9 @@ export default function App() {
                       )}
                       。
                     </>
-                  )
-                ) : (
-                  <>仅和弦模式无可试听旋律；拖动进度条可定位当前和弦位置。</>
-                )}
-              </p>
+                  )}
+                </p>
+              )}
 
               {view === "svg" ? (
                 <TabView
