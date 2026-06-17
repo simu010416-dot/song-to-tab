@@ -18,6 +18,7 @@ class Degree(str, Enum):
     """扒谱程度。"""
 
     simple = "simple"  # 只扒主旋律
+    chords = "chords"  # 只扒和弦（无单音旋律）
     medium = "medium"  # 旋律 + 主要和弦
     full = "full"      # 尽可能多的音符
 

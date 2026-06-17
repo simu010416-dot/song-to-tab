@@ -30,6 +30,7 @@ const ENGINES: Opt<Engine>[] = [
 
 const DEGREES: Opt<Degree>[] = [
   { id: "simple", title: "简化", desc: "只扒主旋律（单音）" },
+  { id: "chords", title: "和弦", desc: "只识别和弦走向（无单音旋律）" },
   { id: "medium", title: "中等", desc: "旋律 + 主要和弦" },
   { id: "full", title: "完整", desc: "尽可能多的音符（进阶引擎更佳）" },
 ];
@@ -196,6 +197,11 @@ export default function App() {
     return () => cancelAnimationFrame(rafRef.current);
   }, []);
 
+  const hasMelody = Boolean(result?.notes.length);
+  const hasTabContent = Boolean(
+    result && (result.notes.length > 0 || result.chords.length > 0)
+  );
+
   const activeNotes = useMemo(() => {
     if (!result) return new Set<number>();
     const set = new Set<number>();
@@ -232,11 +238,13 @@ export default function App() {
 
   const seekPlayback = useCallback(
     (sec: number) => {
+      if (!result) return;
       const player = playerRef.current;
-      if (!player || !result) return;
-      player.seek(sec);
+      if (player && result.notes.length > 0) {
+        player.seek(sec);
+        setIsPlaying(player.isPlaying);
+      }
       setCurrentTime(sec);
-      setIsPlaying(player.isPlaying);
     },
     [result]
   );
@@ -533,7 +541,7 @@ export default function App() {
               ASCII 六线谱
             </button>
             <div style={{ flex: 1 }} />
-            {view === "svg" && result.notes.length > 0 && (
+            {view === "svg" && hasTabContent && (
               <button className="btn ghost" onClick={exportPng}>
                 导出 PNG
               </button>
@@ -546,33 +554,37 @@ export default function App() {
             </button>
           </div>
 
-          {result.notes.length === 0 ? (
-            <div className="warn">没有可显示的音符。</div>
+          {!hasTabContent ? (
+            <div className="warn">没有可显示的谱面内容。</div>
           ) : (
             <>
               <div className="transport">
-                <button
-                  className={`transport-btn play ${isPlaying ? "playing" : ""}`}
-                  type="button"
-                  onClick={() => void togglePlay()}
-                  title={isPlaying ? "暂停" : "播放"}
-                  aria-label={isPlaying ? "暂停" : "播放"}
-                >
-                  {isPlaying ? (
-                    <IconPause className="transport-icon" />
-                  ) : (
-                    <IconPlay className="transport-icon" />
-                  )}
-                </button>
-                <button
-                  className="transport-btn"
-                  type="button"
-                  onClick={stopPlayback}
-                  title="停止"
-                  aria-label="停止"
-                >
-                  <IconStop className="transport-icon" />
-                </button>
+                {hasMelody ? (
+                  <>
+                    <button
+                      className={`transport-btn play ${isPlaying ? "playing" : ""}`}
+                      type="button"
+                      onClick={() => void togglePlay()}
+                      title={isPlaying ? "暂停" : "播放"}
+                      aria-label={isPlaying ? "暂停" : "播放"}
+                    >
+                      {isPlaying ? (
+                        <IconPause className="transport-icon" />
+                      ) : (
+                        <IconPlay className="transport-icon" />
+                      )}
+                    </button>
+                    <button
+                      className="transport-btn"
+                      type="button"
+                      onClick={stopPlayback}
+                      title="停止"
+                      aria-label="停止"
+                    >
+                      <IconStop className="transport-icon" />
+                    </button>
+                  </>
+                ) : null}
                 <input
                   className="transport-seek"
                   type="range"
@@ -585,51 +597,65 @@ export default function App() {
                 <span className="transport-time">
                   {formatTime(currentTime)} / {formatTime(result.duration)}
                 </span>
-                <label className="transport-speed">
-                  <span className="transport-speed-label">速度</span>
-                  <select
-                    value={playbackSpeed}
-                    onChange={(e) =>
-                      handleSpeedChange(Number(e.target.value) as PlaybackSpeed)
-                    }
-                  >
-                    {PLAYBACK_SPEEDS.map((s) => (
-                      <option key={s} value={s}>
-                        {s === 1 ? "1×" : `${s}×`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <span className="transport-instrument" title="当前播放音色">
-                  {INSTRUMENT_LABELS[instrument]}
-                </span>
-              </div>
-              <p className="transport-hint">
-                {result.quantize !== "none" ? (
+                {hasMelody ? (
                   <>
-                    音符已按
-                    {QUANTS.find((q) => q.id === result.quantize)?.title}
-                    量化；1× 速度与谱面网格一致（≈{result.tempo.toFixed(0)}{" "}
-                    BPM），变速等比缩放时值
-                    {playbackSpeed !== 1 && (
-                      <>
-                        ，当前约{" "}
-                        {(result.tempo * playbackSpeed).toFixed(0)} BPM
-                      </>
-                    )}
-                    。
+                    <label className="transport-speed">
+                      <span className="transport-speed-label">速度</span>
+                      <select
+                        value={playbackSpeed}
+                        onChange={(e) =>
+                          handleSpeedChange(
+                            Number(e.target.value) as PlaybackSpeed
+                          )
+                        }
+                      >
+                        {PLAYBACK_SPEEDS.map((s) => (
+                          <option key={s} value={s}>
+                            {s === 1 ? "1×" : `${s}×`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <span className="transport-instrument" title="当前播放音色">
+                      {INSTRUMENT_LABELS[instrument]}
+                    </span>
                   </>
                 ) : (
-                  <>
-                    播放速度可选；1× 为原始时值
-                    {playbackSpeed !== 1 && (
-                      <>
-                        ，当前约{" "}
-                        {(result.tempo * playbackSpeed).toFixed(0)} BPM
-                      </>
-                    )}
-                    。
-                  </>
+                  <span className="transport-instrument" title="仅和弦模式">
+                    仅和弦 · 拖动定位
+                  </span>
+                )}
+              </div>
+              <p className="transport-hint">
+                {hasMelody ? (
+                  result.quantize !== "none" ? (
+                    <>
+                      音符已按
+                      {QUANTS.find((q) => q.id === result.quantize)?.title}
+                      量化；1× 速度与谱面网格一致（≈{result.tempo.toFixed(0)}{" "}
+                      BPM），变速等比缩放时值
+                      {playbackSpeed !== 1 && (
+                        <>
+                          ，当前约{" "}
+                          {(result.tempo * playbackSpeed).toFixed(0)} BPM
+                        </>
+                      )}
+                      。
+                    </>
+                  ) : (
+                    <>
+                      播放速度可选；1× 为原始时值
+                      {playbackSpeed !== 1 && (
+                        <>
+                          ，当前约{" "}
+                          {(result.tempo * playbackSpeed).toFixed(0)} BPM
+                        </>
+                      )}
+                      。
+                    </>
+                  )
+                ) : (
+                  <>仅和弦模式无可试听旋律；拖动进度条可定位当前和弦位置。</>
                 )}
               </p>
 

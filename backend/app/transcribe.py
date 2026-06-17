@@ -301,41 +301,49 @@ def transcribe(
         notes: List[RawNote] = []
         chords: List[RawChord] = []
 
-        use_advanced = engine == "advanced"
-        if use_advanced:
-            poly = detect_polyphonic(work_path)
-            if poly is None:
-                warnings.append(
-                    "未检测到 basic-pitch，已回退到务实(单声部)引擎。"
-                    "安装方式：pip install \"basic-pitch[onnx]\""
-                )
-                use_advanced = False
-            else:
-                notes = poly
-
-        if not use_advanced:
-            notes = detect_melody(y, sr)
-
-        # 扒谱程度处理
-        if degree == "simple":
-            notes = _top_voice(notes)  # 仅保留单声部主旋律
-        elif degree == "medium":
-            if not use_advanced:
-                notes = _top_voice(notes)
+        if degree == "chords":
             chords = detect_chords(y, sr, tempo)
-        elif degree == "full":
-            if not use_advanced:
+            if not chords:
                 warnings.append(
-                    "full 程度的多声部需要进阶引擎(basic-pitch)；"
-                    "务实引擎下仍以单声部旋律输出。"
+                    "未能识别到清晰和弦，请尝试伴奏更明显的音频，"
+                    "或使用「去人声」分离后再试。"
                 )
-            chords = detect_chords(y, sr, tempo)
+        else:
+            use_advanced = engine == "advanced"
+            if use_advanced:
+                poly = detect_polyphonic(work_path)
+                if poly is None:
+                    warnings.append(
+                        "未检测到 basic-pitch，已回退到务实(单声部)引擎。"
+                        "安装方式：pip install \"basic-pitch[onnx]\""
+                    )
+                    use_advanced = False
+                else:
+                    notes = poly
 
-        notes = quantize_notes(notes, tempo, quantize)
-        notes.sort(key=lambda n: (n.start, n.midi))
+            if not use_advanced:
+                notes = detect_melody(y, sr)
 
-        if not notes:
-            warnings.append("未能识别到清晰音符，请尝试更干净/单声部的音频。")
+            # 扒谱程度处理
+            if degree == "simple":
+                notes = _top_voice(notes)  # 仅保留单声部主旋律
+            elif degree == "medium":
+                if not use_advanced:
+                    notes = _top_voice(notes)
+                chords = detect_chords(y, sr, tempo)
+            elif degree == "full":
+                if not use_advanced:
+                    warnings.append(
+                        "full 程度的多声部需要进阶引擎(basic-pitch)；"
+                        "务实引擎下仍以单声部旋律输出。"
+                    )
+                chords = detect_chords(y, sr, tempo)
+
+            notes = quantize_notes(notes, tempo, quantize)
+            notes.sort(key=lambda n: (n.start, n.midi))
+
+            if not notes:
+                warnings.append("未能识别到清晰音符，请尝试更干净/单声部的音频。")
 
         processed_audio: Optional[bytes] = None
         if separated_path and separated_path != path and os.path.exists(separated_path):

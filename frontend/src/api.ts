@@ -1,5 +1,5 @@
 export type Engine = "realistic" | "advanced";
-export type Degree = "simple" | "medium" | "full";
+export type Degree = "simple" | "chords" | "medium" | "full";
 export type Quantize = "none" | "quarter" | "eighth" | "sixteenth";
 export type Separate = "none" | "no_vocals" | "vocals" | "other";
 

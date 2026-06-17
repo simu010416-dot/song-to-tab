@@ -93,7 +93,7 @@ async def transcribe_endpoint(
         notes = tab.assign_positions(result.notes)
         chords = tab.chords_to_models(result.chords)
         ascii_tab = tab.render_ascii_tab(notes, result.tempo, chords)
-        measures = tab.count_measures(notes, result.tempo)
+        measures = tab.count_measures(notes, result.tempo, chords)
 
         processed_b64 = None
         if result.processed_audio:
