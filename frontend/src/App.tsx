@@ -8,7 +8,7 @@ import {
   type Separate,
   type TranscriptionResult,
 } from "./api";
-import { TabPlayer, PLAYBACK_SPEEDS, type PlaybackSpeed } from "./player";
+import { TabPlayer, PLAYBACK_SPEEDS, type PlaybackSpeed, type PreviewMode } from "./player";
 import TabView, { type TabViewHandle } from "./TabView";
 import StaffView, { type StaffViewHandle } from "./StaffView";
 import { downloadMusicXml } from "./staffExport";
@@ -63,6 +63,14 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function defaultPreviewMode(result: TranscriptionResult): PreviewMode {
+  const melody = result.notes.length > 0;
+  const chords = result.chords.length > 0;
+  if (melody && chords) return "both";
+  if (chords) return "chords";
+  return "melody";
+}
+
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [drag, setDrag] = useState(false);
@@ -80,6 +88,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("melody");
   const [audioSource, setAudioSource] = useState<"original" | "separated">(
     "original"
   );
@@ -166,18 +175,32 @@ export default function App() {
     setCurrentTime(0);
     setIsPlaying(false);
     setPlaybackSpeed(1);
-    if (result && result.notes.length > 0) {
-      player.load(result.notes, result.duration);
+    if (result && (result.notes.length > 0 || result.chords.length > 0)) {
+      const mode = defaultPreviewMode(result);
+      setPreviewMode(mode);
+      player.load(result.notes, result.chords, result.duration, mode);
       player.setInstrument(instrument);
       player.setPlaybackRate(1);
     } else {
+      setPreviewMode("melody");
       player.unload();
     }
-  }, [result, instrument]);
+  }, [result]);
 
   useEffect(() => {
-    playerRef.current?.setInstrument(instrument);
-  }, [instrument]);
+    const player = playerRef.current;
+    if (!player || !result) return;
+    if (!(result.notes.length > 0 || result.chords.length > 0)) return;
+
+    const wasPlaying = player.isPlaying;
+    const t = player.currentTime;
+    player.load(result.notes, result.chords, result.duration, previewMode);
+    player.setInstrument(instrument);
+    if (wasPlaying) {
+      void player.play(t);
+      setIsPlaying(true);
+    }
+  }, [instrument, previewMode]);
 
   const handleSpeedChange = useCallback((speed: PlaybackSpeed) => {
     setPlaybackSpeed(speed);
@@ -202,6 +225,8 @@ export default function App() {
   }, []);
 
   const hasMelody = Boolean(result?.notes.length);
+  const hasChords = Boolean(result?.chords.length);
+  const canPreview = hasMelody || hasChords;
   const hasTabContent = Boolean(
     result && (result.notes.length > 0 || result.chords.length > 0)
   );
@@ -215,9 +240,18 @@ export default function App() {
     return set;
   }, [result, currentTime]);
 
+  const activeChords = useMemo(() => {
+    if (!result) return new Set<number>();
+    const set = new Set<number>();
+    result.chords.forEach((c, i) => {
+      if (c.start <= currentTime && currentTime < c.end) set.add(i);
+    });
+    return set;
+  }, [result, currentTime]);
+
   const togglePlay = useCallback(async () => {
     const player = playerRef.current;
-    if (!player || !result?.notes.length) return;
+    if (!player || !canPreview || !result) return;
     if (player.isPlaying) {
       player.pause();
       setCurrentTime(player.currentTime);
@@ -230,7 +264,7 @@ export default function App() {
       await player.play(from);
       setIsPlaying(player.isPlaying);
     }
-  }, [currentTime, result]);
+  }, [canPreview, currentTime, result]);
 
   const stopPlayback = useCallback(() => {
     const player = playerRef.current;
@@ -244,13 +278,13 @@ export default function App() {
     (sec: number) => {
       if (!result) return;
       const player = playerRef.current;
-      if (player && result.notes.length > 0) {
+      if (player && canPreview) {
         player.seek(sec);
         setIsPlaying(player.isPlaying);
       }
       setCurrentTime(sec);
     },
-    [result]
+    [canPreview, result]
   );
 
   const pickFile = (f: File | null | undefined) => {
@@ -649,12 +683,14 @@ export default function App() {
                 谱面试听
               </h3>
               <p className="section-desc">
-                {hasMelody
-                  ? "按识别出的音符合成试听，音色仅影响此处播放效果，与扒谱过程无关。"
-                  : "仅和弦模式无可合成旋律；拖动进度条可定位当前和弦位置。"}
+                {hasMelody && hasChords
+                  ? "按识别出的旋律与和弦合成试听，可切换试听内容；音色仅影响此处播放。"
+                  : hasMelody
+                    ? "按识别出的音符合成试听，音色仅影响此处播放效果，与扒谱过程无关。"
+                    : "按识别出的和弦走向合成试听，吉他/尤克里里为扫弦效果。"}
               </p>
               <div className="transport">
-                {hasMelody ? (
+                {canPreview ? (
                   <>
                     <button
                       className={`transport-btn play ${isPlaying ? "playing" : ""}`}
@@ -692,8 +728,24 @@ export default function App() {
                 <span className="transport-time">
                   {formatTime(currentTime)} / {formatTime(result.duration)}
                 </span>
-                {hasMelody ? (
+                {canPreview ? (
                   <>
+                    {hasMelody && hasChords ? (
+                      <label className="transport-speed">
+                        <span className="transport-speed-label">试听</span>
+                        <select
+                          value={previewMode}
+                          onChange={(e) =>
+                            setPreviewMode(e.target.value as PreviewMode)
+                          }
+                          title="选择谱面合成试听内容"
+                        >
+                          <option value="melody">旋律</option>
+                          <option value="chords">和弦</option>
+                          <option value="both">旋律+和弦</option>
+                        </select>
+                      </label>
+                    ) : null}
                     <label className="transport-speed">
                       <span className="transport-speed-label">速度</span>
                       <select
@@ -730,7 +782,7 @@ export default function App() {
                   </>
                 ) : null}
               </div>
-              {hasMelody && (
+              {canPreview && (
                 <p className="transport-hint">
                   {result.quantize !== "none" ? (
                     <>
@@ -772,6 +824,7 @@ export default function App() {
                   filename={result.filename}
                   currentTime={currentTime}
                   activeNotes={activeNotes}
+                  activeChords={activeChords}
                 />
               ) : view === "staff" ? (
                 <StaffView

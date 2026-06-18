@@ -112,3 +112,49 @@ export function scheduleInstrumentNote(
       return schedulePlucked(ctx, dest, midi, t0, dur, vel, brightness);
   }
 }
+
+const STRUM_SPREAD_SEC = 0.016;
+
+/** 和弦试听：吉他/尤克里里扫弦，钢琴块状和弦。 */
+export function scheduleChord(
+  ctx: AudioContext,
+  dest: AudioNode,
+  instrument: Instrument,
+  midis: number[],
+  t0: number,
+  dur: number,
+  vel: number
+): AudioScheduledSourceNode[] {
+  if (midis.length === 0) return [];
+
+  const chordVel = vel * 0.72;
+  const playDur = Math.max(0.28, dur);
+  const sources: AudioScheduledSourceNode[] = [];
+
+  if (instrument === "piano") {
+    for (const midi of midis) {
+      sources.push(
+        ...schedulePiano(ctx, dest, midi, t0, playDur, chordVel / midis.length)
+      );
+    }
+    return sources;
+  }
+
+  const brightness = instrument === "ukulele" ? 0.72 : 0.5;
+  const ordered = [...midis].sort((a, b) => b - a);
+  ordered.forEach((midi, i) => {
+    const noteT0 = t0 + i * STRUM_SPREAD_SEC;
+    sources.push(
+      ...schedulePlucked(
+        ctx,
+        dest,
+        midi,
+        noteT0,
+        playDur,
+        chordVel / ordered.length,
+        brightness
+      )
+    );
+  });
+  return sources;
+}

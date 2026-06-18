@@ -10,6 +10,7 @@ interface Props {
   filename?: string;
   currentTime?: number;
   activeNotes?: Set<number>;
+  activeChords?: Set<number>;
 }
 
 export interface TabViewHandle {
@@ -45,7 +46,7 @@ const DISPLAY_LABELS = ["e", "B", "G", "D", "A", "E"];
 const SERIF = "Georgia, 'Times New Roman', 'Songti SC', serif";
 
 const TabView = forwardRef<TabViewHandle, Props>(function TabView(
-  { notes, chords, duration, tempo, filename, currentTime = 0, activeNotes },
+  { notes, chords, duration, tempo, filename, currentTime = 0, activeNotes, activeChords },
   ref
 ) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -319,18 +320,32 @@ const TabView = forwardRef<TabViewHandle, Props>(function TabView(
         {chords.map((ch, i) => {
           const { row, x } = placeX(ch.start);
           const rowTop = rowTopOf(row);
+          const active = activeChords?.has(i);
           return (
-            <text
-              key={`ch-${i}`}
-              x={x}
-              y={rowTop + 16}
-              fill={C.accent}
-              fontSize={13}
-              fontWeight={700}
-              fontFamily={SERIF}
-            >
-              {ch.name}
-            </text>
+            <g key={`ch-${i}`}>
+              {active ? (
+                <rect
+                  x={x - 4}
+                  y={rowTop + 4}
+                  width={ch.name.length * 8 + 8}
+                  height={18}
+                  rx={3}
+                  fill="#ff7a45"
+                  stroke="#b4531f"
+                  strokeWidth={1.5}
+                />
+              ) : null}
+              <text
+                x={x}
+                y={rowTop + 16}
+                fill={active ? "#fff" : C.accent}
+                fontSize={13}
+                fontWeight={700}
+                fontFamily={SERIF}
+              >
+                {ch.name}
+              </text>
+            </g>
           );
         })}
 
