@@ -232,22 +232,22 @@ export default function App() {
   );
 
   const activeNotes = useMemo(() => {
-    if (!result) return new Set<number>();
+    if (view !== "svg" || !result) return undefined;
     const set = new Set<number>();
     result.notes.forEach((n, i) => {
       if (n.start <= currentTime && currentTime < n.end) set.add(i);
     });
     return set;
-  }, [result, currentTime]);
+  }, [view, result, currentTime]);
 
   const activeChords = useMemo(() => {
-    if (!result) return new Set<number>();
+    if (view !== "svg" || !result) return undefined;
     const set = new Set<number>();
     result.chords.forEach((c, i) => {
       if (c.start <= currentTime && currentTime < c.end) set.add(i);
     });
     return set;
-  }, [result, currentTime]);
+  }, [view, result, currentTime]);
 
   const togglePlay = useCallback(async () => {
     const player = playerRef.current;
