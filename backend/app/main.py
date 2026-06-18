@@ -105,6 +105,12 @@ async def transcribe_endpoint(
         staff_musicxml = staff.build_staff_musicxml(notes, result.chords, **xml_kw)
         tab_musicxml = staff.build_tab_musicxml(notes, result.chords, **xml_kw)
         dual_musicxml = staff.build_dual_musicxml(notes, result.chords, **xml_kw)
+        ascii_tab_chords = (
+            tab.render_ascii_tab([], result.tempo, chords) if chords else ""
+        )
+        tab_musicxml_chords = (
+            staff.build_chords_tab_musicxml(result.chords, **xml_kw) if chords else ""
+        )
 
         processed_b64 = None
         if result.processed_audio:
@@ -123,8 +129,10 @@ async def transcribe_endpoint(
             chords=chords,
             measures=measures,
             ascii_tab=ascii_tab,
+            ascii_tab_chords=ascii_tab_chords,
             staff_musicxml=staff_musicxml,
             tab_musicxml=tab_musicxml,
+            tab_musicxml_chords=tab_musicxml_chords,
             dual_musicxml=dual_musicxml,
             warnings=result.warnings,
             filename=file.filename,

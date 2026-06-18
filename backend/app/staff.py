@@ -30,6 +30,7 @@ TAB_TUNING: List[Tuple[str, int]] = [
 ]
 
 StaffMode = Literal["staff", "dual", "tab"]
+ChordLabelStyle = Literal["harmony", "words"]
 
 
 def _grid_divs(quantize: str) -> int:
@@ -179,14 +180,37 @@ def _append_tab_technical(note_el: ET.Element, note: Note) -> None:
     _sub_element(technical, "fret", str(note.fret))
 
 
-def _append_harmony(parent: ET.Element, chord_name: str) -> None:
-    step, alter, kind = _parse_chord(chord_name)
-    harmony = _sub_element(parent, "harmony")
+def _make_harmony(chord_name: str) -> ET.Element:
+    """创建符合 MusicXML 规范的和弦符号元素。"""
+    name = chord_name.strip()
+    step, alter, kind = _parse_chord(name)
+    harmony = ET.Element("harmony")
+    harmony.set("default-y", "100")
+    harmony.set("placement", "above")
     root = _sub_element(harmony, "root")
     _sub_element(root, "root-step", step)
     if alter is not None:
         _sub_element(root, "root-alter", str(alter))
-    _sub_element(harmony, "kind", kind)
+    kind_el = _sub_element(harmony, "kind", kind)
+    kind_el.set("halign", "center")
+    suffix = name[len(step) :]
+    if alter == 1:
+        suffix = suffix[1:]
+    elif alter == -1:
+        suffix = suffix[1:]
+    kind_el.set("text", suffix)
+    return harmony
+
+
+def _make_chord_direction(chord_name: str) -> ET.Element:
+    """用文字标注和弦名，MuseScore 对 direction/words 的兼容性优于纯 TAB 上的 harmony。"""
+    direction = ET.Element("direction")
+    direction.set("placement", "above")
+    dir_type = _sub_element(direction, "direction-type")
+    words = _sub_element(dir_type, "words", chord_name.strip())
+    words.set("font-weight", "bold")
+    words.set("default-y", "40")
+    return direction
 
 
 def _append_staff_tuning(details: ET.Element) -> None:
@@ -359,6 +383,7 @@ def _measure_elements(
     note_events: List[Tuple[int, int, Note]],
     chord_events: List[Tuple[int, str]],
     mode: StaffMode,
+    chord_label_style: ChordLabelStyle = "harmony",
 ) -> List[ET.Element]:
     """生成一个小节内的 XML 元素列表（harmony + note）。"""
     m_start = measure_idx * DIVS_PER_MEASURE
@@ -382,9 +407,10 @@ def _measure_elements(
     pos = 0
     while pos < DIVS_PER_MEASURE:
         if pos in chord_at:
-            h = ET.Element("harmony")
-            _append_harmony(h, chord_at[pos])
-            elements.append(h)
+            if chord_label_style == "words":
+                elements.append(_make_chord_direction(chord_at[pos]))
+            else:
+                elements.append(_make_harmony(chord_at[pos]))
 
         if occupancy[pos] is not None:
             note = occupancy[pos]
@@ -447,6 +473,7 @@ def _build_musicxml(
     title: str,
     duration: float,
     mode: StaffMode,
+    chord_label_style: ChordLabelStyle = "harmony",
 ) -> str:
     if not notes and not chords:
         return ""
@@ -499,7 +526,9 @@ def _build_musicxml(
             _sub_element(metronome, "per-minute", str(int(round(tempo))))
             _sub_element(direction, "sound", tempo=str(tempo))
 
-        for el in _measure_elements(m, snapped_notes, snapped_chords, mode):
+        for el in _measure_elements(
+            m, snapped_notes, snapped_chords, mode, chord_label_style
+        ):
             measure.append(el)
 
     ET.indent(score, space="  ")
@@ -553,3 +582,25 @@ def build_tab_musicxml(
 ) -> str:
     """将已定位的音符与和弦转为纯 TAB 谱表 MusicXML 4.0 字符串。"""
     return _build_musicxml(notes, chords, tempo, quantize, title, duration, mode="tab")
+
+
+def build_chords_tab_musicxml(
+    chords: List[RawChord],
+    tempo: float,
+    quantize: str = "none",
+    title: str = "Transcription",
+    duration: float = 0.0,
+) -> str:
+    """仅和弦的六线谱 MusicXML：双谱表 + 文本和弦名，便于 MuseScore 显示。"""
+    if not chords:
+        return ""
+    return _build_musicxml(
+        [],
+        chords,
+        tempo,
+        quantize,
+        title,
+        duration,
+        mode="dual",
+        chord_label_style="words",
+    )

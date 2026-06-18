@@ -70,8 +70,10 @@ class TranscriptionResult(BaseModel):
     chords: List[Chord]
     measures: int
     ascii_tab: str
+    ascii_tab_chords: str = Field("", description="仅和弦的 ASCII 六线谱")
     staff_musicxml: str = Field("", description="MusicXML 4.0 单声部五线谱")
     tab_musicxml: str = Field("", description="MusicXML 4.0 纯 TAB 六线谱")
+    tab_musicxml_chords: str = Field("", description="仅和弦的双谱表 MusicXML（五线谱+TAB，文本和弦名）")
     dual_musicxml: str = Field("", description="MusicXML 4.0 双谱表（五线谱 + TAB）")
     warnings: List[str] = []
     filename: Optional[str] = None

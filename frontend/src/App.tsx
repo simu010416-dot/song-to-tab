@@ -11,7 +11,7 @@ import {
 import { TabPlayer, PLAYBACK_SPEEDS, type PlaybackSpeed, type PreviewMode } from "./player";
 import TabView, { type TabViewHandle } from "./TabView";
 import StaffView, { type StaffViewHandle } from "./StaffView";
-import { downloadMusicXml } from "./staffExport";
+import { downloadMusicXml, downloadText } from "./staffExport";
 import SourceAudioPlayer, { base64ToAudioUrl } from "./SourceAudioPlayer";
 import { IconPause, IconPlay, IconStop } from "./TransportIcons";
 import {
@@ -373,6 +373,22 @@ export default function App() {
     downloadMusicXml(result.dual_musicxml, result.filename, "dual");
   };
 
+  const canExportChordsOnly = hasMelody && hasChords;
+
+  const exportChordsPng = () => {
+    tabRef.current?.exportPng(result?.filename, { chordsOnly: true });
+  };
+
+  const exportChordsTabMusicXml = () => {
+    if (!result?.tab_musicxml_chords) return;
+    downloadMusicXml(result.tab_musicxml_chords, result.filename, "tab-chords");
+  };
+
+  const downloadChordsTab = () => {
+    if (!result?.ascii_tab_chords) return;
+    downloadText(result.ascii_tab_chords, result.filename, "-chords");
+  };
+
   return (
     <div className="app">
       <header className="hero">
@@ -667,12 +683,35 @@ export default function App() {
                 下载双谱表
               </button>
             )}
-            <button className="btn ghost" onClick={copyTab}>
-              复制
-            </button>
-            <button className="btn ghost" onClick={downloadTab}>
-              下载 .txt
-            </button>
+            {view === "ascii" && (
+              <>
+                <button className="btn ghost" onClick={copyTab}>
+                  复制
+                </button>
+                <button className="btn ghost" onClick={downloadTab}>
+                  下载 .txt
+                </button>
+              </>
+            )}
+            {canExportChordsOnly && (
+              <>
+                {view === "svg" && (
+                  <button className="btn ghost" onClick={exportChordsPng}>
+                    导出和弦 PNG
+                  </button>
+                )}
+                {result.tab_musicxml_chords && (
+                  <button className="btn ghost" onClick={exportChordsTabMusicXml}>
+                    下载和弦 TAB
+                  </button>
+                )}
+                {view === "ascii" && result.ascii_tab_chords && (
+                  <button className="btn ghost" onClick={downloadChordsTab}>
+                    下载和弦 .txt
+                  </button>
+                )}
+              </>
+            )}
           </div>
 
           {((view === "svg" && result.tab_musicxml) ||

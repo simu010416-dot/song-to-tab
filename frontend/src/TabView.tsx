@@ -14,7 +14,7 @@ interface Props {
 }
 
 export interface TabViewHandle {
-  exportPng: (name?: string) => void;
+  exportPng: (name?: string, opts?: { chordsOnly?: boolean }) => void;
 }
 
 const PX_PER_SEC = 96;
@@ -109,10 +109,13 @@ const TabView = forwardRef<TabViewHandle, Props>(function TabView(
   }, [layout]);
 
   useImperativeHandle(ref, () => ({
-    exportPng: (name?: string) => {
+    exportPng: (name?: string, opts?: { chordsOnly?: boolean }) => {
       const svg = svgRef.current;
       if (!svg) return;
       const clone = svg.cloneNode(true) as SVGSVGElement;
+      if (opts?.chordsOnly) {
+        clone.querySelector('[data-export-layer="notes"]')?.remove();
+      }
       clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
       clone.setAttribute("width", String(ROW_WIDTH));
       clone.setAttribute("height", String(height));
@@ -140,7 +143,7 @@ const TabView = forwardRef<TabViewHandle, Props>(function TabView(
           const a = document.createElement("a");
           const base = (name || filename || "tab").replace(/\.[^.]+$/, "");
           a.href = URL.createObjectURL(blob);
-          a.download = `${base}.png`;
+          a.download = `${base}${opts?.chordsOnly ? "-chords" : ""}.png`;
           a.click();
           URL.revokeObjectURL(a.href);
         }, "image/png");
@@ -350,40 +353,42 @@ const TabView = forwardRef<TabViewHandle, Props>(function TabView(
         })}
 
         {/* 音符品格数字 */}
-        {notes.map((n, i) => {
-          const { row, x } = placeX(n.start);
-          const rowTop = rowTopOf(row);
-          const displayRow = 5 - n.string; // 高音弦在顶部
-          const y = stringY(rowTop, displayRow);
-          const label = String(n.fret);
-          const w = label.length * 8 + 6;
-          const active = activeNotes?.has(i);
-          return (
-            <g key={`n-${i}`}>
-              <rect
-                x={x - w / 2}
-                y={y - 9}
-                width={w}
-                height={18}
-                rx={3}
-                fill={active ? "#ff7a45" : C.paper}
-                stroke={active ? "#b4531f" : "none"}
-                strokeWidth={active ? 1.5 : 0}
-              />
-              <text
-                x={x}
-                y={y + 4}
-                fill={active ? "#fff" : C.ink}
-                fontSize={13}
-                fontWeight={700}
-                fontFamily={SERIF}
-                textAnchor="middle"
-              >
-                {label}
-              </text>
-            </g>
-          );
-        })}
+        <g data-export-layer="notes">
+          {notes.map((n, i) => {
+            const { row, x } = placeX(n.start);
+            const rowTop = rowTopOf(row);
+            const displayRow = 5 - n.string; // 高音弦在顶部
+            const y = stringY(rowTop, displayRow);
+            const label = String(n.fret);
+            const w = label.length * 8 + 6;
+            const active = activeNotes?.has(i);
+            return (
+              <g key={`n-${i}`}>
+                <rect
+                  x={x - w / 2}
+                  y={y - 9}
+                  width={w}
+                  height={18}
+                  rx={3}
+                  fill={active ? "#ff7a45" : C.paper}
+                  stroke={active ? "#b4531f" : "none"}
+                  strokeWidth={active ? 1.5 : 0}
+                />
+                <text
+                  x={x}
+                  y={y + 4}
+                  fill={active ? "#fff" : C.ink}
+                  fontSize={13}
+                  fontWeight={700}
+                  fontFamily={SERIF}
+                  textAnchor="middle"
+                >
+                  {label}
+                </text>
+              </g>
+            );
+          })}
+        </g>
       </svg>
     </div>
   );

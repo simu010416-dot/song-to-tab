@@ -32,8 +32,10 @@ export interface TranscriptionResult {
   chords: Chord[];
   measures: number;
   ascii_tab: string;
+  ascii_tab_chords?: string;
   staff_musicxml: string;
   tab_musicxml: string;
+  tab_musicxml_chords?: string;
   dual_musicxml: string;
   warnings: string[];
   filename?: string;
