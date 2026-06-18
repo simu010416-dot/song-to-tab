@@ -41,6 +41,15 @@ class Separate(str, Enum):
     other = "other"            # 只保留 other 轨（吉他/键盘等）
 
 
+class ChordComplexity(str, Enum):
+    """和弦复杂度（仅 degree 含和弦时生效）。"""
+
+    rich = "rich"          # 七和弦、sus、增减 + 拍级变化
+    standard = "standard"  # 三和弦 + 拍级变化（默认）
+    simple = "simple"      # 三和弦 + 每小节一个和弦
+    minimal = "minimal"    # 仅根音 + 每 2 小节一个和弦
+
+
 class Note(BaseModel):
     midi: int
     name: str
@@ -60,6 +69,7 @@ class Chord(BaseModel):
 class TranscriptionResult(BaseModel):
     engine: Engine
     degree: Degree
+    chord_complexity: ChordComplexity
     quantize: Quantize
     separate: Separate
     tempo: float

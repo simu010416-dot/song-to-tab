@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   checkCapabilities,
   transcribe,
+  type ChordComplexity,
   type Degree,
   type Engine,
   type Quantize,
@@ -35,6 +36,29 @@ const DEGREES: Opt<Degree>[] = [
   { id: "chords", title: "和弦", desc: "只识别和弦走向（无单音旋律）" },
   { id: "medium", title: "中等", desc: "旋律 + 主要和弦" },
   { id: "full", title: "完整", desc: "尽可能多的音符（进阶引擎更佳）" },
+];
+
+const CHORD_COMPLEXITIES: Opt<ChordComplexity>[] = [
+  {
+    id: "rich",
+    title: "丰富",
+    desc: "七和弦、sus、增减 + 拍级变化",
+  },
+  {
+    id: "standard",
+    title: "标准",
+    desc: "大三/小三三和弦 + 拍级变化",
+  },
+  {
+    id: "simple",
+    title: "简易",
+    desc: "三和弦 + 每小节一个和弦",
+  },
+  {
+    id: "minimal",
+    title: "极简",
+    desc: "仅根音 + 每 2 小节一个和弦",
+  },
 ];
 
 const QUANTS: Opt<Quantize>[] = [
@@ -76,6 +100,8 @@ export default function App() {
   const [drag, setDrag] = useState(false);
   const [engine, setEngine] = useState<Engine>("realistic");
   const [degree, setDegree] = useState<Degree>("simple");
+  const [chordComplexity, setChordComplexity] =
+    useState<ChordComplexity>("standard");
   const [quant, setQuant] = useState<Quantize>("none");
   const [separate, setSeparate] = useState<Separate>("none");
   const [instrument, setInstrument] = useState<Instrument>("guitar");
@@ -226,6 +252,8 @@ export default function App() {
 
   const hasMelody = Boolean(result?.notes.length);
   const hasChords = Boolean(result?.chords.length);
+  const showChordComplexity =
+    degree === "chords" || degree === "medium" || degree === "full";
   const canPreview = hasMelody || hasChords;
   const hasTabContent = Boolean(
     result && (result.notes.length > 0 || result.chords.length > 0)
@@ -305,6 +333,7 @@ export default function App() {
       const res = await transcribe(file, {
         engine,
         degree,
+        chord_complexity: chordComplexity,
         quantize: quant,
         separate,
       });
@@ -559,6 +588,31 @@ export default function App() {
                 })}
               </div>
             </div>
+
+            {showChordComplexity && (
+              <div className="control">
+                <h3>和弦复杂度</h3>
+                <div className="segment">
+                  {CHORD_COMPLEXITIES.map((o) => {
+                    const disabled = loading;
+                    return (
+                      <div
+                        key={o.id}
+                        className={`opt ${
+                          chordComplexity === o.id ? "active" : ""
+                        } ${disabled ? "disabled" : ""}`}
+                        onClick={() =>
+                          !disabled && setChordComplexity(o.id)
+                        }
+                      >
+                        <div className="t">{o.title}</div>
+                        <div className="d">{o.desc}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="control">
               <h3>节奏量化</h3>

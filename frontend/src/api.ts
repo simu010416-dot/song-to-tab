@@ -1,5 +1,6 @@
 export type Engine = "realistic" | "advanced";
 export type Degree = "simple" | "chords" | "medium" | "full";
+export type ChordComplexity = "rich" | "standard" | "simple" | "minimal";
 export type Quantize = "none" | "quarter" | "eighth" | "sixteenth";
 export type Separate = "none" | "no_vocals" | "vocals" | "other";
 
@@ -22,6 +23,7 @@ export interface Chord {
 export interface TranscriptionResult {
   engine: Engine;
   degree: Degree;
+  chord_complexity: ChordComplexity;
   quantize: Quantize;
   separate: Separate;
   tempo: number;
@@ -45,6 +47,7 @@ export interface TranscriptionResult {
 export interface TranscribeOptions {
   engine: Engine;
   degree: Degree;
+  chord_complexity: ChordComplexity;
   quantize: Quantize;
   separate: Separate;
 }
@@ -59,6 +62,7 @@ export async function transcribe(
   form.append("file", file);
   form.append("engine", opts.engine);
   form.append("degree", opts.degree);
+  form.append("chord_complexity", opts.chord_complexity);
   form.append("quantize", opts.quantize);
   form.append("separate", opts.separate);
 

@@ -1,6 +1,7 @@
 import type { Instrument } from "./instruments";
 
-const CHORD_RE = /^([A-G])([#b]?)(m(in(or)?)?)?$/i;
+const CHORD_RE =
+  /^([A-G])([#b]?)(m(in(or)?)?|maj7|m7|7|sus4|dim|aug)?$/i;
 
 const ROOT_PC: Record<string, number> = {
   C: 0,
@@ -12,10 +13,20 @@ const ROOT_PC: Record<string, number> = {
   B: 11,
 };
 
+export type ChordQuality =
+  | "major"
+  | "minor"
+  | "maj7"
+  | "m7"
+  | "7"
+  | "sus4"
+  | "dim"
+  | "aug";
+
 /** 解析和弦名，与后端 staff.CHORD_RE 一致。 */
 export function parseChordName(
   name: string
-): { rootPc: number; minor: boolean } | null {
+): { rootPc: number; quality: ChordQuality } | null {
   const m = CHORD_RE.exec(name.trim());
   if (!m) return null;
   const step = m[1].toUpperCase();
@@ -24,12 +35,43 @@ export function parseChordName(
   if (rootPc === undefined) return null;
   if (acc === "#") rootPc = (rootPc + 1) % 12;
   else if (acc === "b") rootPc = (rootPc + 11) % 12;
-  return { rootPc, minor: Boolean(m[3]) };
+
+  const suffix = (m[3] || "").toLowerCase();
+  let quality: ChordQuality = "major";
+  if (!suffix) quality = "major";
+  else if (suffix === "m" || suffix === "min" || suffix === "minor")
+    quality = "minor";
+  else if (suffix === "maj7") quality = "maj7";
+  else if (suffix === "m7") quality = "m7";
+  else if (suffix === "7") quality = "7";
+  else if (suffix === "sus4") quality = "sus4";
+  else if (suffix === "dim") quality = "dim";
+  else if (suffix === "aug") quality = "aug";
+
+  return { rootPc, quality };
 }
 
-/** 三和弦音程：根音、三度、五度（半音）。 */
-function triadIntervals(minor: boolean): [number, number, number] {
-  return minor ? [0, 3, 7] : [0, 4, 7];
+function chordIntervals(quality: ChordQuality): number[] {
+  switch (quality) {
+    case "major":
+      return [0, 4, 7];
+    case "minor":
+      return [0, 3, 7];
+    case "maj7":
+      return [0, 4, 7, 11];
+    case "m7":
+      return [0, 3, 7, 10];
+    case "7":
+      return [0, 4, 7, 10];
+    case "sus4":
+      return [0, 5, 7];
+    case "dim":
+      return [0, 3, 6];
+    case "aug":
+      return [0, 4, 8];
+    default:
+      return [0, 4, 7];
+  }
 }
 
 /** 将 pitch class 放到 [baseMidi, baseMidi+11] 区间。 */
@@ -47,8 +89,8 @@ const BASE_MIDI: Record<Instrument, number> = {
 };
 
 /**
- * 和弦名 → 三音 MIDI 列表（根音在上）。
- * 试听用封闭三和弦，不模拟具体把位。
+ * 和弦名 → MIDI 列表（根音在上）。
+ * 试听用封闭和弦，不模拟具体把位。
  */
 export function chordNameToMidi(
   name: string,
@@ -58,12 +100,8 @@ export function chordNameToMidi(
   if (!parsed) return [];
 
   const base = BASE_MIDI[instrument];
-  const [i0, i1, i2] = triadIntervals(parsed.minor);
-  const pcs = [
-    (parsed.rootPc + i0) % 12,
-    (parsed.rootPc + i1) % 12,
-    (parsed.rootPc + i2) % 12,
-  ];
+  const intervals = chordIntervals(parsed.quality);
+  const pcs = intervals.map((iv) => (parsed.rootPc + iv) % 12);
 
   const rootMidi = pcToMidi(parsed.rootPc, base);
   const midis = [rootMidi];

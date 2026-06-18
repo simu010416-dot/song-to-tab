@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import tab, transcribe
 from . import separate as demucs_separate
 from . import staff
-from .models import Degree, Engine, Quantize, Separate, TranscriptionResult
+from .models import ChordComplexity, Degree, Engine, Quantize, Separate, TranscriptionResult
 from .tab import TUNING_NAMES
 
 
@@ -47,6 +47,7 @@ def root():
         "name": "song-to-tab",
         "engines": [e.value for e in Engine],
         "degrees": [d.value for d in Degree],
+        "chord_complexities": [c.value for c in ChordComplexity],
         "quantize": [q.value for q in Quantize],
         "separate": [s.value for s in Separate],
         "advanced_available": _advanced_available(),
@@ -64,6 +65,7 @@ async def transcribe_endpoint(
     file: UploadFile = File(...),
     engine: Engine = Form(Engine.realistic),
     degree: Degree = Form(Degree.simple),
+    chord_complexity: ChordComplexity = Form(ChordComplexity.standard),
     quantize: Quantize = Form(Quantize.none),
     separate: Separate = Form(Separate.none),
 ):
@@ -89,6 +91,7 @@ async def transcribe_endpoint(
             degree=degree.value,
             quantize=quantize.value,
             separate_mode=separate.value,
+            chord_complexity=chord_complexity.value,
         )
 
         notes = tab.assign_positions(result.notes)
@@ -119,6 +122,7 @@ async def transcribe_endpoint(
         return TranscriptionResult(
             engine=engine,
             degree=degree,
+            chord_complexity=chord_complexity,
             quantize=quantize,
             separate=separate,
             tempo=result.tempo,

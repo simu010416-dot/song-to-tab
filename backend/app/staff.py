@@ -17,7 +17,10 @@ DIVS_PER_MEASURE = BEATS_PER_MEASURE * DIVISIONS  # 16
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-CHORD_RE = re.compile(r"^([A-G])([#b]?)(m(in(or)?)?)?$", re.IGNORECASE)
+CHORD_RE = re.compile(
+    r"^([A-G])([#b]?)(m(in(or)?)?|maj7|m7|7|sus4|dim|aug)?$",
+    re.IGNORECASE,
+)
 
 # TAB 谱表调弦：MusicXML line 自底向上编号，line 1 = 低音 E 弦 … line 6 = 高音 e 弦
 TAB_TUNING: List[Tuple[str, int]] = [
@@ -91,7 +94,25 @@ def _parse_chord(name: str) -> Tuple[str, Optional[int], str]:
         alter = 1
     elif acc == "b":
         alter = -1
-    kind = "minor" if m.group(3) else "major"
+    suffix = (m.group(3) or "").lower()
+    if not suffix:
+        kind = "major"
+    elif suffix in ("m", "min", "minor"):
+        kind = "minor"
+    elif suffix == "maj7":
+        kind = "major-seventh"
+    elif suffix == "m7":
+        kind = "minor-seventh"
+    elif suffix == "7":
+        kind = "dominant"
+    elif suffix == "sus4":
+        kind = "suspended-fourth"
+    elif suffix == "dim":
+        kind = "diminished"
+    elif suffix == "aug":
+        kind = "augmented"
+    else:
+        kind = "major"
     return step, alter, kind
 
 
