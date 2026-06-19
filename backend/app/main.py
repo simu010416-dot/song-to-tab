@@ -6,27 +6,21 @@ import os
 import tempfile
 import traceback
 
+import librosa
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import tab, transcribe
-from . import separate as demucs_separate
-from . import staff
-from .models import ChordComplexity, Degree, Engine, Quantize, Separate, TranscriptionResult
+from . import capabilities, separate as demucs_separate, tab, transcribe, staff
+from .models import (
+    ChordComplexity,
+    Degree,
+    Engine,
+    Quantize,
+    Separate,
+    SeparationResult,
+    TranscriptionResult,
+)
 from .tab import TUNING_NAMES
-
-
-def _advanced_available() -> bool:
-    try:
-        import basic_pitch  # noqa: F401
-
-        return True
-    except Exception:
-        return False
-
-
-def _separate_available() -> bool:
-    return demucs_separate.separate_available()
 
 app = FastAPI(title="song-to-tab", version="0.1.0")
 
@@ -41,6 +35,31 @@ ALLOWED_EXT = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".wma"}
 MAX_BYTES = 30 * 1024 * 1024  # 30 MB
 
 
+def _validate_upload(ext: str, data: bytes) -> None:
+    if ext not in ALLOWED_EXT:
+        raise HTTPException(400, f"不支持的文件类型: {ext or '未知'}")
+    if len(data) > MAX_BYTES:
+        raise HTTPException(413, "文件过大（上限 30MB）")
+    if not data:
+        raise HTTPException(400, "空文件")
+
+
+@app.get("/capabilities/separate")
+def capabilities_separate():
+    return {
+        "available": capabilities.separate_available(),
+        "reason": capabilities.separate_unavailable_reason(),
+    }
+
+
+@app.get("/capabilities/advanced")
+def capabilities_advanced():
+    return {
+        "available": capabilities.advanced_available(),
+        "reason": capabilities.advanced_unavailable_reason(),
+    }
+
+
 @app.get("/")
 def root():
     return {
@@ -50,14 +69,73 @@ def root():
         "chord_complexities": [c.value for c in ChordComplexity],
         "quantize": [q.value for q in Quantize],
         "separate": [s.value for s in Separate],
-        "advanced_available": _advanced_available(),
-        "separate_available": _separate_available(),
+        "advanced_available": capabilities.advanced_available(),
+        "separate_available": capabilities.separate_available(),
     }
 
 
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.post("/separate", response_model=SeparationResult)
+async def separate_endpoint(
+    file: UploadFile = File(...),
+    separate: Separate = Form(...),
+):
+    if separate == Separate.none:
+        raise HTTPException(400, "请选择分离模式（不能为 none）")
+
+    if not capabilities.separate_available():
+        reason = capabilities.separate_unavailable_reason() or "人声分离不可用"
+        raise HTTPException(422, reason)
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    data = await file.read()
+    _validate_upload(ext, data)
+
+    tmp_path = None
+    separated_path = None
+    warnings: list[str] = []
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(data)
+            tmp_path = tmp.name
+
+        separated_path, sep_warn = demucs_separate.run_separation(
+            tmp_path, separate.value
+        )
+        if sep_warn:
+            warnings.append(sep_warn)
+            raise HTTPException(422, sep_warn)
+
+        if not separated_path or not os.path.exists(separated_path):
+            raise HTTPException(500, "分离失败：未生成输出文件")
+
+        duration = float(librosa.get_duration(path=separated_path))
+        with open(separated_path, "rb") as f:
+            processed_b64 = base64.b64encode(f.read()).decode("ascii")
+
+        return SeparationResult(
+            separate=separate,
+            duration=round(duration, 2),
+            warnings=warnings,
+            filename=file.filename,
+            processed_audio_base64=processed_b64,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        raise HTTPException(500, f"分离失败: {exc}") from exc
+    finally:
+        for p in (tmp_path, separated_path):
+            if p and os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
 
 
 @app.post("/transcribe", response_model=TranscriptionResult)
@@ -70,14 +148,8 @@ async def transcribe_endpoint(
     separate: Separate = Form(Separate.none),
 ):
     ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in ALLOWED_EXT:
-        raise HTTPException(400, f"不支持的文件类型: {ext or '未知'}")
-
     data = await file.read()
-    if len(data) > MAX_BYTES:
-        raise HTTPException(413, "文件过大（上限 30MB）")
-    if not data:
-        raise HTTPException(400, "空文件")
+    _validate_upload(ext, data)
 
     tmp_path = None
     try:

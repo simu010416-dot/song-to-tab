@@ -89,7 +89,7 @@ Windows 一键开发（含 Demucs 可选安装）：
 | `docker compose --env-file .env.example up` | 务实引擎（librosa） | 较小 | 日常扒谱、旋律识别 |
 | `docker compose --env-file .env.full.example up` | + Demucs 人声分离 + basic-pitch 进阶引擎 | 约 2GB+ | 需要分离人声或进阶多声部识别 |
 
-基础版与完整版通过 **Compose profile 互斥**：同一时刻只会启动一对前后端容器，不会同时占用端口或混用后端。
+基础版与完整版通过 **Compose profile 互斥**：同一时刻只会启动 `backend` + `frontend` 两个容器，不会同时占用端口。差异在后端镜像（是否安装 Demucs / basic-pitch）与运行参数；**前端为同一套 React 构建产物**，启动后通过 `/api/capabilities/*` 探测后端能力并自适应 UI。
 
 ### 第一步：安装 Docker
 
@@ -118,8 +118,8 @@ cd song-to-tab
 
 | 文件 | 用途 |
 |------|------|
-| [`.env.example`](.env.example) | 基础版（`COMPOSE_PROFILES=basic`） |
-| [`.env.full.example`](.env.full.example) | 完整版（`COMPOSE_PROFILES=full`） |
+| [`.env.example`](.env.example) | 基础版（`COMPOSE_PROFILES=basic`，`INSTALL_OPTIONAL=false`） |
+| [`.env.full.example`](.env.full.example) | 完整版（`COMPOSE_PROFILES=full`，`INSTALL_OPTIONAL=true`） |
 
 可复制为 `.env` 后编辑端口，也可启动时直接用 `--env-file` 引用示例文件（见第四步）。
 
@@ -145,7 +145,7 @@ docker compose --env-file .env.full.example up -d --build
 docker compose up -d --build
 ```
 
-说明：通过 `--env-file` 指定 `COMPOSE_PROFILES`，基础版与完整版**不会同时启动**，避免端口冲突或连错后端。
+说明：通过 `--env-file` 指定 `COMPOSE_PROFILES` 及后端构建参数，基础版与完整版**不会同时启动**，避免端口冲突。切换 profile 时因 `INSTALL_OPTIONAL` 不同会重建 backend 镜像，属预期行为；请先 `down` 再换 env 文件后 `up --build`。
 
 说明：
 
@@ -161,7 +161,7 @@ docker compose --env-file .env.example ps
 docker compose --env-file .env.example logs -f
 
 # 完整版查看后端日志：
-docker compose --env-file .env.full.example logs -f backend-full
+docker compose --env-file .env.full.example logs -f backend
 ```
 
 ### 第五步：验证服务
@@ -190,7 +190,7 @@ curl http://localhost:60901/api/
 
 浏览器访问 **http://localhost:60901**（或你配置的端口），上传一段音频测试扒谱。
 
-完整版额外确认：应只有 2 个容器在运行（`frontend-full`、`backend-full`）：
+完整版额外确认：应只有 2 个容器在运行（`frontend`、`backend`）：
 
 ```bash
 docker compose --env-file .env.full.example ps
@@ -220,32 +220,29 @@ docker compose --env-file .env.example up -d
 
 ### 架构说明
 
-**基础版（profile: basic）**
+基础版与完整版共用同一对服务名（`frontend` + `backend`），仅后端镜像与运行参数不同：
 
 ```
 浏览器 → 宿主机:HOST_PORT → frontend (Nginx)
-                              ├─ /        → 静态页面 (React)
+                              ├─ /        → 静态页面 (React，同一构建)
                               └─ /api/*   → backend:8000 (FastAPI，仅容器内网)
 ```
 
-**完整版（profile: full）**
-
-```
-浏览器 → 宿主机:HOST_PORT → frontend-full (Nginx)
-                              ├─ /        → 静态页面 (React)
-                              └─ /api/*   → backend-full:8000 (privileged + torch/demucs/basic-pitch)
-```
+| profile | 后端差异 |
+|---------|----------|
+| `basic` | 仅 librosa 务实引擎（`INSTALL_OPTIONAL=false`） |
+| `full` | + torch / Demucs / basic-pitch（`INSTALL_OPTIONAL=true`，`privileged` + 更大 `shm_size`） |
 
 - 后端 **8000 端口不对外暴露**，只能通过 Nginx 的 `/api` 访问
-- 前端代码中 `API_BASE = "/api"` 无需修改
-- 完整版 `backend-full` 使用 `privileged: true` 与更大 `shm_size`，便于 PyTorch/Demucs 在容器内运行
+- 前端代码中 `API_BASE = "/api"` 无需修改；**前端无 basic/full 两套 UI**，Demucs / 进阶引擎是否可用由运行时 API 探测决定
+- 完整版 backend 使用 `privileged: true` 与 `shm_size: 2gb`（见 `.env.full.example`），便于 PyTorch/Demucs 在容器内运行
 
 ### 常见问题
 
 | 现象 | 可能原因 | 处理 |
 |------|----------|------|
-| `port is already allocated` | `HOST_PORT` 被占用，或基础版与完整版容器同时运行 | 修改 env 文件中的 `HOST_PORT`；`docker compose ps` 确认只有一对 frontend；切换版本时先 `down` 再换 `--env-file` |
-| 页面能开但上传失败 | 后端未就绪或构建失败 | 基础版：`docker compose --env-file .env.example logs backend`；完整版：`docker compose --env-file .env.full.example logs backend-full` |
+| `port is already allocated` | `HOST_PORT` 被占用，或基础版与完整版容器同时运行 | 修改 env 文件中的 `HOST_PORT`；`docker compose ps` 确认只有 `frontend` + `backend`；切换版本时先 `down` 再换 `--env-file` |
+| 页面能开但上传失败 | 后端未就绪或构建失败 | `docker compose --env-file .env.example logs backend`（或 `.env.full.example`） |
 | 完整版无 Demucs / 进阶引擎 | 用了基础版 env，或 optional 依赖未装上 | 确认使用 `--env-file .env.full.example`；`curl http://localhost:60901/api/` 中两项应为 `true` |
 | 首次分离很慢 | Demucs 下载模型 + CPU 推理 | 正常现象，后续会使用 `model-cache` 卷中的缓存 |
 | 改代码后页面无变化 | 未重建镜像 | 对应用 `--env-file` 执行 `up -d --build` |
@@ -296,6 +293,51 @@ python -c "from app.separate import separate_available, separate_unavailable_rea
 3. **改依赖后重启后端**：关闭旧 backend 窗口，再运行 `.\dev.ps1`。
 4. **看具体 warning**：若分离失败，界面会显示 PyTorch / ffmpeg 等具体原因，而不是笼统的「未检测到 demucs」。
 5. **首次分离较慢**：会下载 `htdemucs` 模型（数百 MB）；mp3 等格式可能需要系统安装 [ffmpeg](https://ffmpeg.org/)。
+
+## NAS / 低内存部署
+
+完整版（PyTorch + Demucs + basic-pitch）在 **NAS 或内存较小的机器** 上可能因 `import basic_pitch` 导致 `GET /` 崩溃。当前版本已做如下优化：
+
+### 能力检测（独立 API）
+
+Demucs 与 basic-pitch **分开探测**，互不影响：
+
+| 端点 | 说明 |
+|------|------|
+| `GET /capabilities/separate` | Demucs / PyTorch 是否可用 |
+| `GET /capabilities/advanced` | basic-pitch 是否可加载 |
+| `GET /` | 聚合上述两项（向后兼容） |
+
+前端分别请求两个端点，一侧失败不会导致另一侧显示错误。
+
+### 分离与扒谱分流
+
+| 端点 | 用途 |
+|------|------|
+| `POST /separate` | **仅做人声分离**，返回 WAV（base64），不扒谱 |
+| `POST /transcribe` | 扒谱；`separate≠none` 时为**分离并扒谱** |
+
+前端提供三个操作：**开始分离**、**分离并扒谱**、**开始扒谱**（可对已分离音频扒谱，避免重复跑 Demucs）。
+
+### 子进程隔离
+
+Demucs 分离、basic-pitch 进阶扒谱、能力探测默认在**子进程**中执行。子进程因 OOM 被 Kill 时，uvicorn 主进程通常仍可继续服务。
+
+### 环境变量
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `SONG_TO_TAB_ISOLATE_HEAVY` | `true` | `false` 时重任务回到进程内（调试用） |
+| `SONG_TO_TAB_CAPABILITY_CACHE_TTL` | `300` | 能力检测缓存秒数 |
+| `SONG_TO_TAB_WORKER_TIMEOUT_SEPARATE` | `600` | Demucs 分离超时 |
+| `SONG_TO_TAB_WORKER_TIMEOUT_POLYPHONIC` | `300` | basic-pitch 超时 |
+| `SONG_TO_TAB_WORKER_TIMEOUT_PROBE` | `120` | 能力探测超时 |
+
+### NAS 建议
+
+1. 为系统或 Docker 配置 **2–4GB swap**，减轻 OOM。
+2. 优先使用 **务实引擎**；进阶引擎在极低内存下可能探测为不可用。
+3. 需要分离时，可先 **仅分离** 试听确认，再 **对分离结果扒谱**，降低单次内存峰值。
 
 ## 📝 说明与限制
 

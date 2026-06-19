@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple
 import librosa
 import numpy as np
 
-from . import separate
+from . import capabilities, isolated, separate
 
 SR = 22050  # 统一采样率
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -363,8 +363,12 @@ def detect_chords(
 # --------------------------------------------------------------------------- #
 # 多声部 (advanced, basic-pitch)
 # --------------------------------------------------------------------------- #
-def detect_polyphonic(path: str) -> Optional[List[RawNote]]:
-    """使用 basic-pitch 做多声部识别；未安装则返回 None。"""
+def _polyphonic_timeout() -> int:
+    return isolated.env_int("SONG_TO_TAB_WORKER_TIMEOUT_POLYPHONIC", 300)
+
+
+def _detect_polyphonic_impl(path: str) -> Optional[List[RawNote]]:
+    """在进程内使用 basic-pitch 做多声部识别。"""
     try:
         from basic_pitch.inference import predict
         from basic_pitch import ICASSP_2022_MODEL_PATH
@@ -380,7 +384,6 @@ def detect_polyphonic(path: str) -> Optional[List[RawNote]]:
             return None
 
     notes: List[RawNote] = []
-    # note_events: list of (start, end, pitch_midi, amplitude, [pitch_bends])
     for ev in note_events:
         start, end, pitch = float(ev[0]), float(ev[1]), int(ev[2])
         amp = float(ev[3]) if len(ev) > 3 else 0.8
@@ -394,6 +397,28 @@ def detect_polyphonic(path: str) -> Optional[List[RawNote]]:
         )
     notes.sort(key=lambda n: (n.start, n.midi))
     return notes
+
+
+def detect_polyphonic(path: str) -> Optional[List[RawNote]]:
+    """使用 basic-pitch 做多声部识别；未安装或失败则返回 None。"""
+    if isolated.should_isolate():
+        result = isolated.run_worker(
+            "polyphonic_worker",
+            {"input_path": path},
+            timeout=_polyphonic_timeout(),
+        )
+        if not result.get("ok") or not result.get("notes"):
+            return None
+        return [
+            RawNote(
+                midi=int(n["midi"]),
+                start=float(n["start"]),
+                end=float(n["end"]),
+                velocity=float(n.get("velocity", 0.8)),
+            )
+            for n in result["notes"]
+        ]
+    return _detect_polyphonic_impl(path)
 
 
 # --------------------------------------------------------------------------- #
@@ -445,14 +470,14 @@ def transcribe(
     separated_path: Optional[str] = None
 
     if separate_mode != "none":
-        if separate.separate_available():
+        if capabilities.separate_available():
             separated_path, sep_warn = separate.run_separation(path, separate_mode)
             if sep_warn:
                 warnings.append(sep_warn)
             elif separated_path and separated_path != path:
                 work_path = separated_path
         else:
-            reason = separate.separate_unavailable_reason()
+            reason = capabilities.separate_unavailable_reason()
             warnings.append(
                 reason or "人声分离不可用，已跳过人声分离。"
             )

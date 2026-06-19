@@ -66,6 +66,17 @@ class Chord(BaseModel):
     end: float
 
 
+class SeparationResult(BaseModel):
+    separate: Separate
+    duration: float
+    sample_rate: int = 44100
+    warnings: List[str] = []
+    filename: Optional[str] = None
+    processed_audio_base64: Optional[str] = Field(
+        None, description="Demucs 分离后的 WAV（base64）"
+    )
+
+
 class TranscriptionResult(BaseModel):
     engine: Engine
     degree: Degree

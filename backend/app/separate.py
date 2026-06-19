@@ -5,6 +5,8 @@ import os
 import tempfile
 from typing import Optional, Tuple
 
+from . import isolated
+
 
 def _import_error() -> Optional[str]:
     """Return None if demucs separation deps load; else a short reason."""
@@ -38,15 +40,12 @@ def separate_unavailable_reason() -> Optional[str]:
     return f"人声分离不可用：{err}"
 
 
-def run_separation(path: str, mode: str) -> Tuple[Optional[str], Optional[str]]:
-    """分离音频并导出目标声部 wav。
+def _separate_timeout() -> int:
+    return isolated.env_int("SONG_TO_TAB_WORKER_TIMEOUT_SEPARATE", 600)
 
-    Returns:
-        (out_path, warning) — 成功时 warning 为 None；失败时 out_path 为 None。
-    """
-    if mode == "none":
-        return path, None
 
+def _run_separation_impl(path: str, mode: str) -> Tuple[Optional[str], Optional[str]]:
+    """在进程内执行 Demucs 分离（供 worker 或 ISOLATE_HEAVY=false 时调用）。"""
     reason = _import_error()
     if reason:
         return None, f"{reason}，已跳过人声分离。"
@@ -106,3 +105,29 @@ def run_separation(path: str, mode: str) -> Tuple[Optional[str], Optional[str]]:
             except OSError:
                 pass
         return None, f"Demucs 分离失败，已回退到原始音频: {exc}"
+
+
+def _run_separation_isolated(path: str, mode: str) -> Tuple[Optional[str], Optional[str]]:
+    result = isolated.run_worker(
+        "separate_worker",
+        {"input_path": path, "mode": mode},
+        timeout=_separate_timeout(),
+    )
+    if result.get("ok") and result.get("output_path"):
+        return result["output_path"], None
+    err = result.get("error") or "Demucs 分离失败"
+    return None, f"{err}，已回退到原始音频。"
+
+
+def run_separation(path: str, mode: str) -> Tuple[Optional[str], Optional[str]]:
+    """分离音频并导出目标声部 wav。
+
+    Returns:
+        (out_path, warning) — 成功时 warning 为 None；失败时 out_path 为 None。
+    """
+    if mode == "none":
+        return path, None
+
+    if isolated.should_isolate():
+        return _run_separation_isolated(path, mode)
+    return _run_separation_impl(path, mode)

@@ -4,52 +4,28 @@ services:
   backend:
     profiles:
       - basic
-    build:
-      context: ./backend
-      args:
-        INSTALL_OPTIONAL: "false"
-    expose:
-      - "8000"
-    restart: unless-stopped
-    volumes:
-      - model-cache:/root/.cache
-
-  backend-full:
-    profiles:
       - full
     build:
       context: ./backend
       args:
-        INSTALL_OPTIONAL: "true"
+        INSTALL_OPTIONAL: ${INSTALL_OPTIONAL:-false}
+    privileged: ${BACKEND_PRIVILEGED:-false}
+    shm_size: ${BACKEND_SHM_SIZE:-64m}
     expose:
       - "8000"
     restart: unless-stopped
-    privileged: true
-    shm_size: "2gb"
     volumes:
       - model-cache:/root/.cache
 
   frontend:
     profiles:
       - basic
+      - full
     build: ./frontend
     ports:
       - "${HOST_PORT:-60901}:80"
     depends_on:
       backend:
-        condition: service_healthy
-    restart: unless-stopped
-
-  frontend-full:
-    profiles:
-      - full
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.full
-    ports:
-      - "${HOST_PORT:-60901}:80"
-    depends_on:
-      backend-full:
         condition: service_healthy
     restart: unless-stopped
 

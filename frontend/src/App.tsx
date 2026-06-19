@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   checkCapabilities,
+  separateAudio,
+  separationResultToFile,
   transcribe,
   type ChordComplexity,
   type Degree,
   type Engine,
   type Quantize,
   type Separate,
+  type SeparationResult,
   type TranscriptionResult,
 } from "./api";
 import { TabPlayer, PLAYBACK_SPEEDS, type PlaybackSpeed, type PreviewMode } from "./player";
@@ -106,7 +109,13 @@ export default function App() {
   const [separate, setSeparate] = useState<Separate>("none");
   const [instrument, setInstrument] = useState<Instrument>("guitar");
   const [loading, setLoading] = useState(false);
+  const [separating, setSeparating] = useState(false);
   const [result, setResult] = useState<TranscriptionResult | null>(null);
+  const [separationResult, setSeparationResult] =
+    useState<SeparationResult | null>(null);
+  const [separatedFile, setSeparatedFile] = useState<File | null>(null);
+  const [useSeparatedForTranscribe, setUseSeparatedForTranscribe] =
+    useState(false);
   const [error, setError] = useState<string | null>(null);
   const [advancedOk, setAdvancedOk] = useState<boolean | null>(null);
   const [separateOk, setSeparateOk] = useState<boolean | null>(null);
@@ -156,10 +165,15 @@ export default function App() {
     };
   }, [originalAudioUrl]);
 
+  const separatedB64 =
+    separationResult?.processed_audio_base64 ??
+    result?.processed_audio_base64 ??
+    null;
+
   const separatedAudioUrl = useMemo(() => {
-    if (!result?.processed_audio_base64) return null;
-    return base64ToAudioUrl(result.processed_audio_base64);
-  }, [result?.processed_audio_base64]);
+    if (!separatedB64) return null;
+    return base64ToAudioUrl(separatedB64);
+  }, [separatedB64]);
 
   useEffect(() => {
     return () => {
@@ -181,10 +195,27 @@ export default function App() {
       : originalAudioUrl;
 
   const separateLabel = useMemo(() => {
-    if (!result || result.separate === "none") return "分离后";
-    const opt = SEPARATES.find((s) => s.id === result.separate);
+    const mode =
+      separationResult?.separate ??
+      (result && result.separate !== "none" ? result.separate : null);
+    if (!mode || mode === "none") return "分离后";
+    const opt = SEPARATES.find((s) => s.id === mode);
     return opt ? `分离后 · ${opt.title}` : "分离后";
-  }, [result]);
+  }, [separationResult, result]);
+
+  const useSeparatedInput =
+    useSeparatedForTranscribe && Boolean(separatedFile);
+
+  const transcribeButtonLabel = useMemo(() => {
+    if (loading) {
+      return useSeparatedInput
+        ? "正在用分离音频扒谱…"
+        : "正在用原音频扒谱…";
+    }
+    return useSeparatedInput ? "用分离音频扒谱" : "用原音频扒谱";
+  }, [loading, useSeparatedInput]);
+
+  const busy = loading || separating;
 
   const resetPlayback = useCallback(() => {
     const player = playerRef.current;
@@ -320,11 +351,61 @@ export default function App() {
     resetPlayback();
     setFile(f);
     setResult(null);
+    setSeparationResult(null);
+    setSeparatedFile(null);
+    setUseSeparatedForTranscribe(false);
     setError(null);
   };
 
-  const run = async () => {
+  const runSeparateOnly = async () => {
+    if (!file || separate === "none") return;
+    resetPlayback();
+    setSeparating(true);
+    setError(null);
+    setSeparationResult(null);
+    setSeparatedFile(null);
+    setUseSeparatedForTranscribe(false);
+    try {
+      const res = await separateAudio(file, separate);
+      setSeparationResult(res);
+      const sepFile = separationResultToFile(res, file.name);
+      if (sepFile) {
+        setSeparatedFile(sepFile);
+        setUseSeparatedForTranscribe(true);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSeparating(false);
+    }
+  };
+
+  const runTranscribeOnly = async () => {
     if (!file) return;
+    const input =
+      useSeparatedForTranscribe && separatedFile ? separatedFile : file;
+    resetPlayback();
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await transcribe(input, {
+        engine,
+        degree,
+        chord_complexity: chordComplexity,
+        quantize: quant,
+        separate: "none",
+      });
+      setResult(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runSeparateAndTranscribe = async () => {
+    if (!file || separate === "none") return;
     resetPlayback();
     setLoading(true);
     setError(null);
@@ -338,6 +419,22 @@ export default function App() {
         separate,
       });
       setResult(res);
+      if (res.processed_audio_base64) {
+        const sepRes: SeparationResult = {
+          separate: res.separate,
+          duration: res.duration,
+          sample_rate: res.sample_rate,
+          warnings: res.warnings,
+          filename: res.filename,
+          processed_audio_base64: res.processed_audio_base64,
+        };
+        setSeparationResult(sepRes);
+        const sepFile = separationResultToFile(sepRes, file.name);
+        if (sepFile) {
+          setSeparatedFile(sepFile);
+          setUseSeparatedForTranscribe(true);
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -361,13 +458,20 @@ export default function App() {
   };
 
   const downloadSeparatedAudio = () => {
-    if (!result?.processed_audio_base64) return;
-    const base = (result.filename || file?.name || "audio").replace(
-      /\.[^.]+$/,
-      ""
-    );
-    const mode = result.separate !== "none" ? result.separate : "separated";
-    const url = base64ToAudioUrl(result.processed_audio_base64);
+    const b64 =
+      separationResult?.processed_audio_base64 ??
+      result?.processed_audio_base64;
+    if (!b64) return;
+    const base = (
+      separationResult?.filename ??
+      result?.filename ??
+      file?.name ??
+      "audio"
+    ).replace(/\.[^.]+$/, "");
+    const mode =
+      separationResult?.separate ??
+      (result?.separate !== "none" ? result?.separate : "separated");
+    const url = base64ToAudioUrl(b64);
     const a = document.createElement("a");
     a.href = url;
     a.download = `${base}_${mode}.wav`;
@@ -430,16 +534,16 @@ export default function App() {
       {/* 1. 上传 */}
       <div className="panel">
         <div
-          className={`dropzone ${drag ? "drag" : ""} ${loading ? "disabled" : ""}`}
-          onClick={() => !loading && inputRef.current?.click()}
+          className={`dropzone ${drag ? "drag" : ""} ${busy ? "disabled" : ""}`}
+          onClick={() => !busy && inputRef.current?.click()}
           onDragOver={(e) => {
-            if (loading) return;
+            if (busy) return;
             e.preventDefault();
             setDrag(true);
           }}
           onDragLeave={() => setDrag(false)}
           onDrop={(e) => {
-            if (loading) return;
+            if (busy) return;
             e.preventDefault();
             setDrag(false);
             pickFile(e.dataTransfer.files?.[0]);
@@ -498,7 +602,7 @@ export default function App() {
 
       {/* 3. 扒谱设置（与乐器无关） */}
       {file && (
-        <div className={`panel ${loading ? "panel-locked" : ""}`}>
+        <div className={`panel ${busy ? "panel-locked" : ""}`}>
           <h3 className="section-title">扒谱设置</h3>
           <p className="section-desc">
             以下选项只影响如何从音频生成谱面，不改变谱面试听时的合成音色。
@@ -518,7 +622,7 @@ export default function App() {
               <div className="segment">
                 {SEPARATES.map((o) => {
                   const disabled =
-                    loading || (o.id !== "none" && separateOk === false);
+                    busy || (o.id !== "none" && separateOk === false);
                   return (
                     <div
                       key={o.id}
@@ -540,7 +644,7 @@ export default function App() {
               <div className="segment">
                 {ENGINES.map((o) => {
                   const disabled =
-                    loading || (o.id === "advanced" && advancedOk === false);
+                    busy || (o.id === "advanced" && advancedOk === false);
                   return (
                     <div
                       key={o.id}
@@ -572,7 +676,7 @@ export default function App() {
               <h3>扒谱程度</h3>
               <div className="segment">
                 {DEGREES.map((o) => {
-                  const disabled = loading;
+                  const disabled = busy;
                   return (
                     <div
                       key={o.id}
@@ -594,7 +698,7 @@ export default function App() {
                 <h3>和弦复杂度</h3>
                 <div className="segment">
                   {CHORD_COMPLEXITIES.map((o) => {
-                    const disabled = loading;
+                    const disabled = busy;
                     return (
                       <div
                         key={o.id}
@@ -618,7 +722,7 @@ export default function App() {
               <h3>节奏量化</h3>
               <div className="segment">
                 {QUANTS.map((o) => {
-                  const disabled = loading;
+                  const disabled = busy;
                   return (
                     <div
                       key={o.id}
@@ -636,15 +740,79 @@ export default function App() {
             </div>
           </div>
 
-          <div className="row" style={{ marginTop: 20 }}>
-            <button className="btn" disabled={loading} onClick={run}>
+          {separatedFile && (
+            <label
+              className="row"
+              style={{ marginTop: 12, fontSize: 13, cursor: "pointer" }}
+            >
+              <input
+                type="checkbox"
+                checked={useSeparatedForTranscribe}
+                onChange={(e) => setUseSeparatedForTranscribe(e.target.checked)}
+                disabled={busy}
+                style={{ marginRight: 8 }}
+              />
+              开始扒谱时使用已分离的音频（不再重复跑 Demucs）
+            </label>
+          )}
+
+          <div className="row" style={{ marginTop: 20, flexWrap: "wrap", gap: 10 }}>
+            {separateOk !== false && (
+              <>
+                <button
+                  className="btn ghost"
+                  disabled={
+                    busy ||
+                    separate === "none" ||
+                    separateOk === null
+                  }
+                  title={
+                    separate === "none"
+                      ? "请先在上方选择分离模式（如「去人声」）"
+                      : separateOk === null
+                      ? "正在检测 Demucs 是否可用"
+                      : undefined
+                  }
+                  onClick={runSeparateOnly}
+                >
+                  {separating && <span className="spinner" />}
+                  {separating ? "正在分离…" : "开始分离"}
+                </button>
+                <button
+                  className="btn"
+                  disabled={
+                    busy ||
+                    separate === "none" ||
+                    separateOk === null
+                  }
+                  title={
+                    separate === "none"
+                      ? "请先在上方选择分离模式（如「去人声」）"
+                      : separateOk === null
+                      ? "正在检测 Demucs 是否可用"
+                      : undefined
+                  }
+                  onClick={runSeparateAndTranscribe}
+                >
+                  {loading && <span className="spinner" />}
+                  {loading ? "分离并扒谱…" : "分离并扒谱"}
+                </button>
+              </>
+            )}
+            <button
+              className="btn"
+              disabled={busy}
+              onClick={runTranscribeOnly}
+            >
               {loading && <span className="spinner" />}
-              {loading ? "正在扒谱…" : "开始扒谱"}
+              {transcribeButtonLabel}
             </button>
-            {loading && (
+            {busy && (
               <span style={{ color: "var(--muted)", fontSize: 13 }}>
-                {separate !== "none"
+                {separating
                   ? "Demucs 分离可能较慢（首次运行需下载模型）"
+                  : separate !== "none"
+                  ? "分离并扒谱会先做人声分离"
                   : "首次运行进阶引擎可能较慢（加载模型）"}
               </span>
             )}
